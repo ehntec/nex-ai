@@ -43,9 +43,7 @@ async def search_files(
     return _search_python(pattern, search_dir, project_root, max_results)
 
 
-async def _search_ripgrep(
-    pattern: str, search_dir: Path, max_results: int
-) -> ToolResult | None:
+async def _search_ripgrep(pattern: str, search_dir: Path, max_results: int) -> ToolResult | None:
     """Attempt search using ripgrep (rg).
 
     Returns None if rg is not available.
@@ -55,9 +53,12 @@ async def _search_ripgrep(
             "rg",
             "--no-heading",
             "--line-number",
-            "--context", "2",
-            "--max-count", str(max_results),
-            "--color", "never",
+            "--context",
+            "2",
+            "--max-count",
+            str(max_results),
+            "--color",
+            "never",
             pattern,
             str(search_dir),
             stdout=asyncio.subprocess.PIPE,
@@ -82,7 +83,7 @@ async def _search_ripgrep(
 
     except FileNotFoundError:
         return None  # rg not installed, fall back
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ToolResult(success=False, output="", error="Search timed out")
 
 
@@ -97,9 +98,27 @@ def _search_python(
 
     matches: list[str] = []
     source_extensions = {
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs",
-        ".java", ".rb", ".php", ".c", ".cpp", ".h", ".swift",
-        ".kt", ".md", ".txt", ".toml", ".yaml", ".yml", ".json",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".rb",
+        ".php",
+        ".c",
+        ".cpp",
+        ".h",
+        ".swift",
+        ".kt",
+        ".md",
+        ".txt",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
     }
 
     for file_path in search_dir.rglob("*"):

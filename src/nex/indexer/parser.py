@@ -77,7 +77,7 @@ class ASTParser:
             if handler is not None:
                 try:
                     return handler(content, file_str)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass  # Fall through to regex
 
         return self._parse_regex(content, file_str, language)
@@ -103,7 +103,7 @@ class ASTParser:
                 if hasattr(mod, "language"):
                     ts_lang = ts.Language(mod.language())
                     self._ts_languages[lang_name] = ts_lang
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     def _parse_python(self, content: bytes, file_path: str) -> list[Symbol]:
@@ -124,12 +124,18 @@ class ASTParser:
                         if child.type == "function_definition":
                             symbols.append(self._ts_function(child, content, file_path, "method"))
             elif node.type in ("import_statement", "import_from_statement"):
-                text = content[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
-                symbols.append(Symbol(
-                    name=text.strip(), kind="import", file_path=file_path,
-                    line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
-                    signature=text.strip(), docstring=None,
-                ))
+                text = content[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+                symbols.append(
+                    Symbol(
+                        name=text.strip(),
+                        kind="import",
+                        file_path=file_path,
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=text.strip(),
+                        docstring=None,
+                    )
+                )
         return symbols
 
     def _parse_javascript(self, content: bytes, file_path: str) -> list[Symbol]:
@@ -166,11 +172,17 @@ class ASTParser:
                 name_node = self._child_by_type(node, "type_identifier")
                 name = self._node_text(name_node, content) if name_node else "<anonymous>"
                 sig = self._first_line(node, content)
-                symbols.append(Symbol(
-                    name=name, kind="class", file_path=file_path,
-                    line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
-                    signature=sig, docstring=None,
-                ))
+                symbols.append(
+                    Symbol(
+                        name=name,
+                        kind="class",
+                        file_path=file_path,
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=sig,
+                        docstring=None,
+                    )
+                )
             elif node.type in ("lexical_declaration", "variable_declaration"):
                 sym = self._ts_arrow_function(node, content, file_path)
                 if sym is not None:
@@ -213,11 +225,17 @@ class ASTParser:
             if language == "python" and idx < len(lines):
                 docstring = self._extract_python_docstring(lines, idx - 1)
 
-            symbols.append(Symbol(
-                name=name, kind=kind, file_path=file_path,
-                line_start=idx, line_end=idx,
-                signature=stripped, docstring=docstring,
-            ))
+            symbols.append(
+                Symbol(
+                    name=name,
+                    kind=kind,
+                    file_path=file_path,
+                    line_start=idx,
+                    line_end=idx,
+                    signature=stripped,
+                    docstring=docstring,
+                )
+            )
         return symbols
 
     @staticmethod
@@ -240,7 +258,7 @@ class ASTParser:
         doc_lines = [first[3:]]
         for i in range(start + 1, min(start + 100, len(lines))):
             if quote in lines[i]:
-                doc_lines.append(lines[i][:lines[i].index(quote)])
+                doc_lines.append(lines[i][: lines[i].index(quote)])
                 break
             doc_lines.append(lines[i])
         return textwrap.dedent("\n".join(doc_lines)).strip()
@@ -262,9 +280,13 @@ class ASTParser:
         sig = self._first_line(node, content)
         docstring = self._ts_docstring(node, content)
         return Symbol(
-            name=name, kind=kind, file_path=file_path,
-            line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
-            signature=sig, docstring=docstring,
+            name=name,
+            kind=kind,
+            file_path=file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=sig,
+            docstring=docstring,
         )
 
     def _ts_arrow_function(self, node: Any, content: bytes, file_path: str) -> Symbol | None:
@@ -279,9 +301,13 @@ class ASTParser:
                     name = self._node_text(name_node, content) if name_node else "<anonymous>"
                     sig = self._first_line(node, content)
                     return Symbol(
-                        name=name, kind="function", file_path=file_path,
-                        line_start=node.start_point[0] + 1, line_end=node.end_point[0] + 1,
-                        signature=sig, docstring=None,
+                        name=name,
+                        kind="function",
+                        file_path=file_path,
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=sig,
+                        docstring=None,
                     )
         return None
 
@@ -297,11 +323,11 @@ class ASTParser:
                         raw = self._node_text(sub, content)
                         for q in ('"""', "'''", '"', "'"):
                             if raw.startswith(q) and raw.endswith(q):
-                                raw = raw[len(q):-len(q)]
+                                raw = raw[len(q) : -len(q)]
                                 break
                         return textwrap.dedent(raw).strip()
                 break
-            elif child.type != "comment":
+            if child.type != "comment":
                 break
         return None
 
@@ -316,10 +342,10 @@ class ASTParser:
     @staticmethod
     def _node_text(node: Any, content: bytes) -> str:
         """Extract source text for a tree-sitter node."""
-        return content[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        return content[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
     @staticmethod
     def _first_line(node: Any, content: bytes) -> str:
         """Extract the first source line for a tree-sitter node."""
-        text = content[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        text = content[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
         return text.split("\n", 1)[0].strip()

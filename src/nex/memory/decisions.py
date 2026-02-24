@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -74,7 +74,7 @@ class DecisionLog:
         Raises:
             NexMemoryError: If the file cannot be written.
         """
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         entry = (
             f"### [{timestamp}] \u2014 Task: {task}\n"
             f"**Decision:** {decision}\n"
@@ -90,9 +90,7 @@ class DecisionLog:
                 with self.log_path.open("a", encoding="utf-8") as fh:
                     fh.write(entry)
         except OSError as exc:
-            raise NexMemoryError(
-                f"Failed to write decision log at {self.log_path}: {exc}"
-            ) from exc
+            raise NexMemoryError(f"Failed to write decision log at {self.log_path}: {exc}") from exc
 
     def load(self) -> list[Decision]:
         """Parse all decision entries from the log file.
@@ -108,9 +106,7 @@ class DecisionLog:
         try:
             text = self.log_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise NexMemoryError(
-                f"Failed to read decision log at {self.log_path}: {exc}"
-            ) from exc
+            raise NexMemoryError(f"Failed to read decision log at {self.log_path}: {exc}") from exc
 
         return [
             Decision(

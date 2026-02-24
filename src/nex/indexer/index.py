@@ -7,7 +7,7 @@ import math
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -70,10 +70,13 @@ class IndexBuilder:
                 symbols = self._parser.parse_file(abs_path, fi.language)
                 symbols = [
                     Symbol(
-                        name=s.name, kind=s.kind,
+                        name=s.name,
+                        kind=s.kind,
                         file_path=str(fi.path).replace("\\", "/"),
-                        line_start=s.line_start, line_end=s.line_end,
-                        signature=s.signature, docstring=s.docstring,
+                        line_start=s.line_start,
+                        line_end=s.line_end,
+                        signature=s.signature,
+                        docstring=s.docstring,
                     )
                     for s in symbols
                 ]
@@ -84,7 +87,7 @@ class IndexBuilder:
         index = CodeIndex(
             symbols=all_symbols,
             files=files,
-            last_updated=datetime.now(timezone.utc).isoformat(),
+            last_updated=datetime.now(UTC).isoformat(),
         )
 
         self.save(index)
@@ -109,9 +112,13 @@ class IndexBuilder:
 
             symbols = [
                 Symbol(
-                    name=s["name"], kind=s["kind"], file_path=s["file_path"],
-                    line_start=s["line_start"], line_end=s["line_end"],
-                    signature=s["signature"], docstring=s.get("docstring"),
+                    name=s["name"],
+                    kind=s["kind"],
+                    file_path=s["file_path"],
+                    line_start=s["line_start"],
+                    line_end=s["line_end"],
+                    signature=s["signature"],
+                    docstring=s.get("docstring"),
                 )
                 for s in data.get("symbols", [])
             ]
@@ -120,7 +127,8 @@ class IndexBuilder:
                 for f in data.get("files", [])
             ]
             return CodeIndex(
-                symbols=symbols, files=files,
+                symbols=symbols,
+                files=files,
                 last_updated=data.get("last_updated", ""),
             )
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
@@ -217,9 +225,7 @@ class IndexBuilder:
         return [t.lower() for t in spaced.split() if len(t) >= 2]
 
     @staticmethod
-    def _score(
-        sym: Symbol, query_tokens: list[str], df: Counter[str], doc_count: int
-    ) -> float:
+    def _score(sym: Symbol, query_tokens: list[str], df: Counter[str], doc_count: int) -> float:
         """Compute TF-IDF-like relevance score."""
         sym_bag = Counter(IndexBuilder._symbol_tokens(sym))
         name_tokens = {

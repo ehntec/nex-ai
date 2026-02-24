@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from typing import Any
 
 import pytest
 
-from nex.api_client import APIResponse, AnthropicClient
+from nex.api_client import AnthropicClient, APIResponse
 from nex.config import NexConfig
 
 
@@ -38,12 +37,14 @@ def mock_api_response() -> APIResponse:
 def mock_tool_response() -> APIResponse:
     """Create a mock API response with a tool_use block."""
     return APIResponse(
-        content=[{
-            "type": "tool_use",
-            "id": "toolu_test123",
-            "name": "read_file",
-            "input": {"path": "test.py"},
-        }],
+        content=[
+            {
+                "type": "tool_use",
+                "id": "toolu_test123",
+                "name": "read_file",
+                "input": {"path": "test.py"},
+            }
+        ],
         model="claude-sonnet-4-20250514",
         input_tokens=100,
         output_tokens=50,

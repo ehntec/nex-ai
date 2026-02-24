@@ -37,10 +37,8 @@ async def run_command(
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
             process.kill()
             await process.communicate()
             return ToolResult(
@@ -61,7 +59,8 @@ async def run_command(
             combined += stderr_str
 
         if len(combined) > _MAX_OUTPUT_LEN:
-            combined = combined[:_MAX_OUTPUT_LEN] + f"\n... (truncated, total {len(combined)} chars)"
+            total = len(combined)
+            combined = combined[:_MAX_OUTPUT_LEN] + f"\n... (truncated, total {total} chars)"
 
         return ToolResult(
             success=process.returncode == 0,

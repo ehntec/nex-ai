@@ -21,11 +21,22 @@ from nex.exceptions import SafetyError
 
 console = Console()
 
-_SENSITIVE_FILENAMES: frozenset[str] = frozenset({
-    ".env", ".env.local", ".env.production", ".env.development",
-    "credentials.json", "service-account.json", "secrets.yaml",
-    "secrets.yml", "id_rsa", "id_ed25519", ".npmrc", ".pypirc",
-})
+_SENSITIVE_FILENAMES: frozenset[str] = frozenset(
+    {
+        ".env",
+        ".env.local",
+        ".env.production",
+        ".env.development",
+        "credentials.json",
+        "service-account.json",
+        "secrets.yaml",
+        "secrets.yml",
+        "id_rsa",
+        "id_ed25519",
+        ".npmrc",
+        ".pypirc",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -169,28 +180,32 @@ class SafetyLayer:
             True if user approves, False otherwise.
         """
         if self._dry_run:
-            console.print(Panel(
+            console.print(
+                Panel(
+                    Text.assemble(
+                        ("BLOCKED (dry-run): ", "bold red"),
+                        (action, "white"),
+                        ("\nReason: ", "bold yellow"),
+                        (reason, "yellow"),
+                    ),
+                    title="[bold red]Safety Layer[/bold red]",
+                    border_style="red",
+                )
+            )
+            return False
+
+        console.print(
+            Panel(
                 Text.assemble(
-                    ("BLOCKED (dry-run): ", "bold red"),
+                    ("Action: ", "bold white"),
                     (action, "white"),
                     ("\nReason: ", "bold yellow"),
                     (reason, "yellow"),
                 ),
-                title="[bold red]Safety Layer[/bold red]",
+                title="[bold red]Dangerous Operation[/bold red]",
                 border_style="red",
-            ))
-            return False
-
-        console.print(Panel(
-            Text.assemble(
-                ("Action: ", "bold white"),
-                (action, "white"),
-                ("\nReason: ", "bold yellow"),
-                (reason, "yellow"),
-            ),
-            title="[bold red]Dangerous Operation[/bold red]",
-            border_style="red",
-        ))
+            )
+        )
 
         answer = Prompt.ask("[bold]Allow?[/bold]", choices=["y", "n"], default="n")
         return answer.lower() == "y"

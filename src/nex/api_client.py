@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from rich.console import Console
@@ -146,12 +146,14 @@ class AnthropicClient:
                     if block.type == "text":
                         content_dicts.append({"type": "text", "text": block.text})
                     elif block.type == "tool_use":
-                        content_dicts.append({
-                            "type": "tool_use",
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
+                        content_dicts.append(
+                            {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
+                        )
 
                 return APIResponse(
                     content=content_dicts,
@@ -161,13 +163,13 @@ class AnthropicClient:
                     stop_reason=response.stop_reason,
                 )
 
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_error = exc
                 status_code = getattr(exc, "status_code", None)
 
                 # Retry on rate limit or server errors
                 if status_code in (429, 500, 502, 503, 529) and attempt < self._max_retries:
-                    wait = 2 ** attempt
+                    wait = 2**attempt
                     retry_after = getattr(exc, "retry_after", None)
                     if retry_after:
                         wait = max(wait, float(retry_after))

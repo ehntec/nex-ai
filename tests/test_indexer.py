@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from nex.indexer.scanner import FileInfo, FileScanner
-from nex.indexer.parser import ASTParser, Symbol
-from nex.indexer.index import CodeIndex, IndexBuilder
+from nex.indexer.index import IndexBuilder
+from nex.indexer.parser import ASTParser
+from nex.indexer.scanner import FileScanner
 
 
 class TestFileScanner:
@@ -122,5 +122,6 @@ class TestIndexBuilder:
         builder = IndexBuilder(tmp_path)
 
         from nex.exceptions import IndexerError
+
         with pytest.raises(IndexerError):
             builder.search_symbols("anything")

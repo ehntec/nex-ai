@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -21,8 +20,8 @@ from rich.table import Table
 from rich.text import Text
 
 from nex import __version__
-from nex.config import NexConfig, load_config, save_global_config
-from nex.exceptions import ConfigError, NexError
+from nex.config import load_config, save_global_config
+from nex.exceptions import NexError
 
 app = typer.Typer(
     name="nex",
@@ -95,16 +94,19 @@ def main(
         if not nex_dir.is_dir():
             _error_exit("Project not initialized.", hint="Run 'nex init' first.")
 
-        console.print(Panel(
-            f"[bold]Task:[/bold] {task}",
-            title=f"[bold cyan]Nex AI[/bold cyan] v{__version__}",
-            border_style="cyan",
-        ))
+        console.print(
+            Panel(
+                f"[bold]Task:[/bold] {task}",
+                title=f"[bold cyan]Nex AI[/bold cyan] v{__version__}",
+                border_style="cyan",
+            )
+        )
 
         if config.dry_run:
             console.print("[yellow]Running in dry-run mode.[/yellow]\n")
 
         from nex.agent import run_task
+
         asyncio.run(run_task(task, config))
 
     except KeyboardInterrupt:
@@ -112,7 +114,7 @@ def main(
         raise typer.Exit(code=130)
     except NexError as exc:
         _error_exit(str(exc))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         console.print_exception(show_locals=False)
         _error_exit(f"Unexpected error: {exc}")
 
@@ -134,25 +136,31 @@ def init() -> None:
     (nex_dir / "config.toml").write_text(_CONFIG_TEMPLATE, encoding="utf-8")
     (nex_dir / ".gitignore").write_text("errors.db\nindex.json\n", encoding="utf-8")
 
-    console.print(Panel(
-        Text.assemble(
-            ("Initialized Nex AI in ", "green"),
-            (str(nex_dir), "bold green"),
-            ("\n\nCreated:\n", "white"),
-            ("  memory.md     ", "cyan"), ("- project memory (edit this!)\n", "dim"),
-            ("  decisions.md  ", "cyan"), ("- decision log\n", "dim"),
-            ("  config.toml   ", "cyan"), ("- project settings\n", "dim"),
-            ("  .gitignore    ", "cyan"), ("- ignores errors.db, index.json", "dim"),
-        ),
-        title="[bold green]Project Initialized[/bold green]",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            Text.assemble(
+                ("Initialized Nex AI in ", "green"),
+                (str(nex_dir), "bold green"),
+                ("\n\nCreated:\n", "white"),
+                ("  memory.md     ", "cyan"),
+                ("- project memory (edit this!)\n", "dim"),
+                ("  decisions.md  ", "cyan"),
+                ("- decision log\n", "dim"),
+                ("  config.toml   ", "cyan"),
+                ("- project settings\n", "dim"),
+                ("  .gitignore    ", "cyan"),
+                ("- ignores errors.db, index.json", "dim"),
+            ),
+            title="[bold green]Project Initialized[/bold green]",
+            border_style="green",
+        )
+    )
 
     console.print(
         "\n[dim]Next steps:[/dim]\n"
         "  1. Edit [cyan].nex/memory.md[/cyan] with your project details\n"
         "  2. Run [cyan]nex auth[/cyan] to configure your API key\n"
-        "  3. Run [cyan]nex \"your first task\"[/cyan]\n"
+        '  3. Run [cyan]nex "your first task"[/cyan]\n'
     )
 
 
@@ -184,6 +192,7 @@ def status() -> None:
     errors_path = nex_dir / "errors.db"
     if errors_path.is_file():
         import sqlite3
+
         try:
             conn = sqlite3.connect(str(errors_path))
             count = conn.execute("SELECT COUNT(*) FROM error_patterns").fetchone()[0]
@@ -198,12 +207,12 @@ def status() -> None:
     index_path = nex_dir / "index.json"
     if index_path.is_file():
         import json
+
         try:
             data = json.loads(index_path.read_text(encoding="utf-8"))
             table.add_row(
                 "Index",
-                f"{len(data.get('files', []))} files, "
-                f"{len(data.get('symbols', []))} symbols",
+                f"{len(data.get('files', []))} files, {len(data.get('symbols', []))} symbols",
             )
         except (json.JSONDecodeError, KeyError):
             table.add_row("Index", "[yellow]Malformed[/yellow]")
@@ -223,12 +232,14 @@ def status() -> None:
 @app.command()
 def auth() -> None:
     """Set up Anthropic API key."""
-    console.print(Panel(
-        "Configure your Anthropic API key.\n"
-        "Get one at [link=https://console.anthropic.com/]console.anthropic.com[/link]",
-        title="[bold cyan]API Key Setup[/bold cyan]",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "Configure your Anthropic API key.\n"
+            "Get one at [link=https://console.anthropic.com/]console.anthropic.com[/link]",
+            title="[bold cyan]API Key Setup[/bold cyan]",
+            border_style="cyan",
+        )
+    )
 
     api_key = Prompt.ask("\n[bold]Anthropic API key[/bold]")
     if not api_key.strip():
@@ -252,7 +263,9 @@ def rollback() -> None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         branch = result.stdout.strip()
 
@@ -265,7 +278,9 @@ def rollback() -> None:
 
         log = subprocess.run(
             ["git", "log", "-1", "--oneline"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         console.print(f"[bold]Last commit:[/bold] {log.stdout.strip()}")
 
@@ -275,7 +290,9 @@ def rollback() -> None:
 
         revert = subprocess.run(
             ["git", "revert", "HEAD", "--no-edit"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if revert.returncode != 0:
             _error_exit(f"Revert failed: {revert.stderr.strip()}")
@@ -303,7 +320,13 @@ def memory_cmd(
             _error_exit("No memory.md found.")
             return
         content = memory_path.read_text(encoding="utf-8")
-        console.print(Panel(Markdown(content), title="[bold cyan]Project Memory[/bold cyan]", border_style="cyan"))
+        console.print(
+            Panel(
+                Markdown(content),
+                title="[bold cyan]Project Memory[/bold cyan]",
+                border_style="cyan",
+            )
+        )
 
     elif action == "edit":
         if not memory_path.is_file():

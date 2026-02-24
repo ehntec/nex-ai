@@ -22,7 +22,9 @@ class TestInit:
         assert (tmp_path / ".nex" / "decisions.md").is_file()
         assert (tmp_path / ".nex" / "config.toml").is_file()
 
-    def test_init_already_initialized(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_init_already_initialized(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".nex").mkdir()
         result = runner.invoke(app, ["init"])

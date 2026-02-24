@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from rich.console import Console
 
@@ -118,7 +117,7 @@ class ContextAssembler:
         builder = IndexBuilder(self._project_dir)
         try:
             symbols = builder.search_symbols(task, index)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return []
 
         # Collect unique files ordered by relevance

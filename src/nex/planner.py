@@ -46,7 +46,11 @@ class Subtask:
 class Planner:
     """Decomposes a task into subtasks using Claude Haiku."""
 
-    def __init__(self, api_client: AnthropicClient, haiku_model: str = "claude-haiku-4-5-20251001") -> None:
+    def __init__(
+        self,
+        api_client: AnthropicClient,
+        haiku_model: str = "claude-haiku-4-5-20251001",
+    ) -> None:
         """Initialize the planner.
 
         Args:
@@ -112,5 +116,7 @@ class Planner:
             return subtasks
 
         except (json.JSONDecodeError, KeyError, TypeError):
-            console.print("[yellow]Warning[/yellow]: Could not parse plan, proceeding without decomposition")
+            console.print(
+                "[yellow]Warning[/yellow]: Could not parse plan, proceeding without decomposition"
+            )
             return [Subtask(description=task, file_paths=[], priority=1)]

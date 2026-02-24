@@ -22,12 +22,11 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 
-from nex.api_client import AnthropicClient, APIResponse
+from nex.api_client import AnthropicClient
 from nex.config import NexConfig
 from nex.context import ContextAssembler
 from nex.exceptions import NexError, SafetyError, ToolError
-from nex.memory.decisions import DecisionLog
-from nex.memory.errors import ErrorPattern, ErrorPatternDB
+from nex.memory.errors import ErrorPatternDB
 from nex.memory.project import ProjectMemory
 from nex.safety import SafetyLayer
 from nex.tools import TOOL_DEFINITIONS, ToolResult
@@ -140,9 +139,7 @@ class Agent:
                     )
 
                 # Process response
-                has_tool_use = any(
-                    block.get("type") == "tool_use" for block in response.content
-                )
+                has_tool_use = any(block.get("type") == "tool_use" for block in response.content)
 
                 if not has_tool_use:
                     # Task complete — extract text
@@ -150,11 +147,13 @@ class Agent:
                         if block.get("type") == "text":
                             final_response = block.get("text", "")
                             console.print()
-                            console.print(Panel(
-                                Markdown(final_response),
-                                title="[bold green]Task Complete[/bold green]",
-                                border_style="green",
-                            ))
+                            console.print(
+                                Panel(
+                                    Markdown(final_response),
+                                    title="[bold green]Task Complete[/bold green]",
+                                    border_style="green",
+                                )
+                            )
                     break
 
                 # Execute tool calls
@@ -168,7 +167,8 @@ class Agent:
                         tool_input = block["input"]
                         tool_id = block["id"]
 
-                        console.print(f"  [cyan]Tool:[/cyan] {tool_name}({_summarize_input(tool_input)})")
+                        summary = _summarize_input(tool_input)
+                        console.print(f"  [cyan]Tool:[/cyan] {tool_name}({summary})")
 
                         result = await self._execute_tool(tool_name, tool_input)
 
@@ -177,19 +177,21 @@ class Agent:
                         else:
                             console.print(f"  [red]Error:[/red] {result.error}")
 
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": result.output if result.success else f"Error: {result.error}",
-                            "is_error": not result.success,
-                        })
+                        content = result.output if result.success else f"Error: {result.error}"
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": content,
+                                "is_error": not result.success,
+                            }
+                        )
 
                 self._messages.append({"role": "user", "content": tool_results})
 
             else:
-                console.print(
-                    f"\n[bold yellow]Reached max iterations ({self._config.max_iterations})[/bold yellow]"
-                )
+                max_iter = self._config.max_iterations
+                console.print(f"\n[bold yellow]Reached max iterations ({max_iter})[/bold yellow]")
                 final_response = "Task did not complete within the iteration limit."
 
         except KeyboardInterrupt:
@@ -218,25 +220,26 @@ class Agent:
             if tool_name == "read_file":
                 return await read_file(tool_input["path"], self._project_dir)
 
-            elif tool_name == "write_file":
-                # Safety check for file writes
-                check = self._safety.check_file_write(tool_input["path"], self._project_dir)
+            if tool_name == "write_file":
+                path = tool_input["path"]
+                check = self._safety.check_file_write(path, self._project_dir)
                 if not check.is_safe:
                     if check.requires_approval:
                         approved = await self._safety.request_approval(
-                            f"Write to {tool_input['path']}", check.reason or ""
+                            f"Write to {path}", check.reason or ""
                         )
                         if not approved:
-                            return ToolResult(success=False, output="", error="Write denied by user")
+                            return ToolResult(success=False, output="", error="Write denied")
                     else:
-                        return ToolResult(success=False, output="", error=check.reason or "Write blocked")
+                        reason = check.reason or "Write blocked"
+                        return ToolResult(success=False, output="", error=reason)
 
-                result = await write_file(tool_input["path"], tool_input["content"], self._project_dir)
+                result = await write_file(path, tool_input["content"], self._project_dir)
                 if result.success:
                     self._files_modified = True
                 return result
 
-            elif tool_name == "run_command":
+            if tool_name == "run_command":
                 # Safety check for commands
                 try:
                     await self._safety.guard_command(tool_input["command"])
@@ -251,23 +254,22 @@ class Agent:
 
                 return await run_command(tool_input["command"], self._project_dir)
 
-            elif tool_name == "search_files":
+            if tool_name == "search_files":
                 return await search_files(
                     tool_input["pattern"],
                     tool_input.get("path", "."),
                     self._project_dir,
                 )
 
-            elif tool_name == "list_directory":
+            if tool_name == "list_directory":
                 return await self._list_directory(
                     tool_input.get("path", "."),
                     tool_input.get("depth", 3),
                 )
 
-            else:
-                return ToolResult(success=False, output="", error=f"Unknown tool: {tool_name}")
+            return ToolResult(success=False, output="", error=f"Unknown tool: {tool_name}")
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return ToolResult(success=False, output="", error=f"Tool error: {exc}")
 
     async def _list_directory(self, path: str, depth: int) -> ToolResult:

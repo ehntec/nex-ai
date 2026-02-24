@@ -49,10 +49,10 @@ class TestErrorPatternDB:
         assert results[0].language == "python"
 
     def test_find_similar_by_task(self, error_db: ErrorPatternDB) -> None:
-        error_db.log_error(_make_pattern(task_summary="add login"))
-        error_db.log_error(_make_pattern(task_summary="add payment"))
+        error_db.log_error(_make_pattern(task_summary="add login", file_path="src/auth.py"))
+        error_db.log_error(_make_pattern(task_summary="add payment", file_path="src/payment.py"))
 
-        results = error_db.find_similar(language="python", task_summary="login")
+        results = error_db.find_similar(language="python", task_summary="login", file_path="auth")
         assert len(results) == 1
 
     def test_find_similar_no_language(self, error_db: ErrorPatternDB) -> None:

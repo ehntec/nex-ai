@@ -40,7 +40,7 @@ class GitOperations:
         """Open the git repo, returning None if not a repo."""
         try:
             return self._repo_class(self._project_dir)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
 
     def is_repo(self) -> bool:
@@ -101,7 +101,7 @@ class GitOperations:
             if staged:
                 return repo.git.diff("--cached")  # type: ignore[union-attr]
             return repo.git.diff()  # type: ignore[union-attr]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolError(f"Failed to get diff: {exc}") from exc
 
     def create_branch(self, name: str) -> None:
@@ -118,7 +118,7 @@ class GitOperations:
         try:
             repo.git.checkout("-b", branch_name)  # type: ignore[union-attr]
             console.print(f"[green]Created branch[/green] {branch_name}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolError(f"Failed to create branch {branch_name}: {exc}") from exc
 
     def commit(self, message: str) -> str:
@@ -140,7 +140,7 @@ class GitOperations:
             commit_hash: str = repo.head.commit.hexsha[:8]  # type: ignore[union-attr]
             console.print(f"[green]Committed[/green] {commit_hash}: {message}")
             return commit_hash
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolError(f"Failed to commit: {exc}") from exc
 
     def rollback(self) -> None:
@@ -157,7 +157,7 @@ class GitOperations:
         try:
             repo.git.revert("HEAD", "--no-edit")  # type: ignore[union-attr]
             console.print("[green]Rolled back[/green] last commit")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolError(f"Failed to rollback: {exc}") from exc
 
     def current_branch(self) -> str:
@@ -172,7 +172,7 @@ class GitOperations:
         repo = self._ensure_repo()
         try:
             return str(repo.active_branch)  # type: ignore[union-attr]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ToolError(f"Failed to get current branch: {exc}") from exc
 
     def _ensure_repo(self) -> object:

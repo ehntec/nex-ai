@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -39,12 +39,14 @@ def text_response() -> APIResponse:
 def tool_then_text_responses(tmp_path: Path) -> list[APIResponse]:
     return [
         APIResponse(
-            content=[{
-                "type": "tool_use",
-                "id": "toolu_001",
-                "name": "read_file",
-                "input": {"path": "main.py"},
-            }],
+            content=[
+                {
+                    "type": "tool_use",
+                    "id": "toolu_001",
+                    "name": "read_file",
+                    "input": {"path": "main.py"},
+                }
+            ],
             model="claude-sonnet-4-20250514",
             input_tokens=100,
             output_tokens=50,
@@ -103,12 +105,14 @@ class TestAgent:
     async def test_max_iterations(self, agent_config: AgentConfig) -> None:
         """Agent should stop after max_iterations."""
         tool_response = APIResponse(
-            content=[{
-                "type": "tool_use",
-                "id": "toolu_loop",
-                "name": "list_directory",
-                "input": {"path": "."},
-            }],
+            content=[
+                {
+                    "type": "tool_use",
+                    "id": "toolu_loop",
+                    "name": "list_directory",
+                    "input": {"path": "."},
+                }
+            ],
             model="claude-sonnet-4-20250514",
             input_tokens=50,
             output_tokens=30,

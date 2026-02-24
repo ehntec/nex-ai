@@ -16,11 +16,27 @@ console = Console(stderr=True)
 
 _MAX_FILE_SIZE = 1_048_576  # 1 MB
 
-_ALWAYS_SKIP: frozenset[str] = frozenset({
-    ".git", ".hg", ".svn", "__pycache__", "node_modules", ".nex",
-    ".venv", "venv", ".env", "env", ".tox", ".mypy_cache",
-    ".pytest_cache", ".ruff_cache", "dist", "build", ".eggs",
-})
+_ALWAYS_SKIP: frozenset[str] = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        "node_modules",
+        ".nex",
+        ".venv",
+        "venv",
+        ".env",
+        "env",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".eggs",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +107,9 @@ class FileScanner:
                 dirpath = Path(dirpath_str)
 
                 dirnames[:] = [
-                    d for d in dirnames
-                    if not self._should_skip_dir(d)
-                    and not self._is_ignored(dirpath / d)
+                    d
+                    for d in dirnames
+                    if not self._should_skip_dir(d) and not self._is_ignored(dirpath / d)
                 ]
 
                 for fname in filenames:
@@ -119,9 +135,7 @@ class FileScanner:
             raise IndexerError(f"Failed to scan project directory: {exc}") from exc
 
         results.sort(key=lambda fi: fi.path)
-        console.print(
-            f"[green]Scanner[/green] found [bold]{len(results)}[/bold] source files"
-        )
+        console.print(f"[green]Scanner[/green] found [bold]{len(results)}[/bold] source files")
         return results
 
     def _load_gitignore(self) -> list[str]:
@@ -157,9 +171,8 @@ class FileScanner:
             if "/" in pat:
                 if fnmatch.fnmatch(rel, pat):
                     return not negated
-            else:
-                if fnmatch.fnmatch(basename, pat):
-                    return not negated
+            elif fnmatch.fnmatch(basename, pat):
+                return not negated
         return False
 
     @staticmethod

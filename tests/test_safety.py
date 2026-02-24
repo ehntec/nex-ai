@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nex.safety import SafetyCheck, SafetyLayer
+from nex.safety import SafetyLayer
 
 
 @pytest.fixture
@@ -142,5 +142,6 @@ class TestGuardCommand:
     @pytest.mark.asyncio
     async def test_dangerous_command_in_dry_run(self, dry_run_safety: SafetyLayer) -> None:
         from nex.exceptions import SafetyError
+
         with pytest.raises(SafetyError):
             await dry_run_safety.guard_command("rm -rf /")
