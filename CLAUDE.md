@@ -4,7 +4,7 @@
 
 Nex AI is a CLI-based AI coding agent that wraps the Anthropic Claude API with persistent project memory, error pattern learning, and codebase indexing. It makes AI coding assistants more reliable by remembering your project context, avoiding past mistakes, and verifying its own work.
 
-**What it is:** A Python CLI tool installed via `pip install nex-ai`. Users run `nex "add a login endpoint"` and the agent reads the codebase, recalls project conventions and past errors, generates code, runs tests, and commits — all with context it retains across sessions.
+**What it is:** A Python CLI tool installed via `pip install nexcoder`. Users run `nex "add a login endpoint"` and the agent reads the codebase, recalls project conventions and past errors, generates code, runs tests, and commits — all with context it retains across sessions.
 
 **What it is NOT:** An IDE. A Cursor/Windsurf competitor. A web app. A multi-model orchestrator (yet). Keep it simple.
 

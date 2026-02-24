@@ -15,7 +15,7 @@ A CLI-based AI coding agent that wraps the Anthropic Claude API with persistent 
 ## Installation
 
 ```bash
-pip install nex-ai
+pip install nexcoder
 ```
 
 ## Quick Start
