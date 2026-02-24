@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
@@ -28,15 +29,15 @@ class GitOperations:
         """
         self._project_dir = project_dir
         try:
-            from git import Repo  # type: ignore[import-untyped]
+            from git import Repo
 
             self._repo_class = Repo
         except ImportError as exc:
             raise ToolError("GitPython is required: pip install gitpython") from exc
 
-        self._repo = self._open_repo()
+        self._repo: Any = self._open_repo()
 
-    def _open_repo(self) -> object | None:
+    def _open_repo(self) -> Any:
         """Open the git repo, returning None if not a repo."""
         try:
             return self._repo_class(self._project_dir)
@@ -60,21 +61,21 @@ class GitOperations:
         lines: list[str] = []
 
         # Staged changes
-        staged = repo.index.diff("HEAD")  # type: ignore[union-attr]
+        staged = repo.index.diff("HEAD")
         if staged:
             lines.append("Staged:")
             for diff in staged:
                 lines.append(f"  {diff.change_type}: {diff.a_path}")
 
         # Unstaged changes
-        unstaged = repo.index.diff(None)  # type: ignore[union-attr]
+        unstaged = repo.index.diff(None)
         if unstaged:
             lines.append("Modified:")
             for diff in unstaged:
                 lines.append(f"  {diff.change_type}: {diff.a_path}")
 
         # Untracked
-        untracked = repo.untracked_files  # type: ignore[union-attr]
+        untracked = repo.untracked_files
         if untracked:
             lines.append("Untracked:")
             for f in untracked[:20]:
@@ -99,8 +100,8 @@ class GitOperations:
         repo = self._ensure_repo()
         try:
             if staged:
-                return repo.git.diff("--cached")  # type: ignore[union-attr]
-            return repo.git.diff()  # type: ignore[union-attr]
+                return str(repo.git.diff("--cached"))
+            return str(repo.git.diff())
         except Exception as exc:
             raise ToolError(f"Failed to get diff: {exc}") from exc
 
@@ -116,7 +117,7 @@ class GitOperations:
         repo = self._ensure_repo()
         branch_name = f"nex/{name}"
         try:
-            repo.git.checkout("-b", branch_name)  # type: ignore[union-attr]
+            repo.git.checkout("-b", branch_name)
             console.print(f"[green]Created branch[/green] {branch_name}")
         except Exception as exc:
             raise ToolError(f"Failed to create branch {branch_name}: {exc}") from exc
@@ -135,9 +136,9 @@ class GitOperations:
         """
         repo = self._ensure_repo()
         try:
-            repo.git.add("-A")  # type: ignore[union-attr]
-            repo.git.commit("-m", message)  # type: ignore[union-attr]
-            commit_hash: str = repo.head.commit.hexsha[:8]  # type: ignore[union-attr]
+            repo.git.add("-A")
+            repo.git.commit("-m", message)
+            commit_hash: str = repo.head.commit.hexsha[:8]
             console.print(f"[green]Committed[/green] {commit_hash}: {message}")
             return commit_hash
         except Exception as exc:
@@ -155,7 +156,7 @@ class GitOperations:
             raise ToolError(f"Rollback only works on nex/* branches (current: {branch})")
 
         try:
-            repo.git.revert("HEAD", "--no-edit")  # type: ignore[union-attr]
+            repo.git.revert("HEAD", "--no-edit")
             console.print("[green]Rolled back[/green] last commit")
         except Exception as exc:
             raise ToolError(f"Failed to rollback: {exc}") from exc
@@ -171,11 +172,11 @@ class GitOperations:
         """
         repo = self._ensure_repo()
         try:
-            return str(repo.active_branch)  # type: ignore[union-attr]
+            return str(repo.active_branch)
         except Exception as exc:
             raise ToolError(f"Failed to get current branch: {exc}") from exc
 
-    def _ensure_repo(self) -> object:
+    def _ensure_repo(self) -> Any:
         """Return the repo object, raising if not available."""
         if self._repo is None:
             raise ToolError("Not a git repository")

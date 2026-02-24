@@ -77,6 +77,22 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 
+[[tool.mypy.overrides]]
+module = [
+    "git.*",
+    "tree_sitter.*",
+    "tree_sitter_python.*",
+    "tree_sitter_javascript.*",
+    "tree_sitter_typescript.*",
+    "anthropic.*",
+    "typer.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "nex.cli"
+disallow_untyped_decorators = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

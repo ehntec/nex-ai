@@ -85,7 +85,7 @@ class AnthropicClient:
             default_model: Default model for requests.
             max_retries: Maximum number of retries for transient errors.
         """
-        from anthropic import AsyncAnthropic  # type: ignore[import-untyped]
+        from anthropic import AsyncAnthropic
 
         self._client = AsyncAnthropic(api_key=api_key)
         self._default_model = default_model

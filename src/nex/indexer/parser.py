@@ -76,7 +76,8 @@ class ASTParser:
             handler = dispatch.get(language)
             if handler is not None:
                 try:
-                    return handler(content, file_str)
+                    result: list[Symbol] = handler(content, file_str)
+                    return result
                 except Exception:
                     pass  # Fall through to regex
 
@@ -85,7 +86,7 @@ class ASTParser:
     def _init_tree_sitter(self) -> None:
         """Attempt to load tree-sitter and language grammars."""
         try:
-            import tree_sitter as ts  # type: ignore[import-untyped]
+            import tree_sitter as ts
         except ImportError:
             return
 
@@ -270,8 +271,8 @@ class ASTParser:
         ts_lang = self._ts_languages.get(language)
         if ts_lang is None or self._ts_parser is None:
             return None
-        self._ts_parser.language = ts_lang  # type: ignore[attr-defined]
-        return self._ts_parser.parse(content)  # type: ignore[union-attr]
+        self._ts_parser.language = ts_lang
+        return self._ts_parser.parse(content)
 
     def _ts_function(self, node: Any, content: bytes, file_path: str, kind: str) -> Symbol:
         """Build a Symbol from a tree-sitter node."""

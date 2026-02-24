@@ -38,6 +38,7 @@ class NexConfig:
         nex_dir: Path to the .nex directory (relative to project root).
     """
 
+    project_dir: Path = field(default_factory=Path.cwd)
     api_key: str = ""
     model: str = "claude-sonnet-4-20250514"
     haiku_model: str = "claude-haiku-4-5-20251001"
@@ -61,7 +62,7 @@ def load_config(project_dir: Path) -> NexConfig:
     Raises:
         ConfigError: If the API key is not set anywhere.
     """
-    config = NexConfig()
+    config = NexConfig(project_dir=project_dir)
 
     # Layer 1: Global config (lowest priority)
     global_settings = _load_toml(_GLOBAL_CONFIG_PATH)
