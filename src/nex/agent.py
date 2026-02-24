@@ -29,6 +29,7 @@ from nex.exceptions import NexError, SafetyError, ToolError
 from nex.memory.errors import ErrorPatternDB
 from nex.memory.project import ProjectMemory
 from nex.safety import SafetyLayer
+from nex.test_runner import TestRunner
 from nex.tools import TOOL_DEFINITIONS, ToolResult
 from nex.tools.file_ops import read_file, write_file
 from nex.tools.git_ops import GitOperations
@@ -201,6 +202,7 @@ class Agent:
         config: AgentConfig,
         api_client: AnthropicClient,
         safety: SafetyLayer,
+        nex_config: NexConfig | None = None,
     ) -> None:
         """Initialize the agent.
 
@@ -208,8 +210,10 @@ class Agent:
             config: Agent run configuration.
             api_client: Anthropic API client.
             safety: Safety layer for command approval.
+            nex_config: Full Nex configuration (for test runner settings).
         """
         self._config = config
+        self._nex_config = nex_config
         self._client = api_client
         self._safety = safety
         self._project_dir = config.project_dir
@@ -346,11 +350,60 @@ class Agent:
         finally:
             error_db.close()
 
-        # Post-task: show diff and offer to commit
+        # Post-task: run tests, show diff, and offer to commit
         if self._files_modified:
+            tests_passed = await self._run_tests()
+            if not tests_passed:
+                console.print(
+                    "[yellow]Tests failed. Review the changes before committing.[/yellow]"
+                )
             await self._post_task_git()
 
         return final_response
+
+    async def _run_tests(self) -> bool:
+        """Detect and run the project's test suite.
+
+        Returns:
+            True if tests passed or no test runner was detected.
+        """
+        runner = TestRunner(self._project_dir)
+
+        # Use config override if available
+        command = None
+        timeout = 120
+        if self._nex_config:
+            if self._nex_config.test_command:
+                command = self._nex_config.test_command
+            timeout = self._nex_config.test_timeout
+
+        if command is None:
+            command = runner.detect()
+
+        if command is None:
+            return True
+
+        console.print(f"\n[bold]Running tests:[/bold] {command}")
+        result = await runner.run(command, timeout)
+
+        if result.success:
+            console.print(
+                Panel(
+                    result.output[:2000] if len(result.output) > 2000 else result.output,
+                    title="[bold green]Tests Passed[/bold green]",
+                    border_style="green",
+                )
+            )
+        else:
+            console.print(
+                Panel(
+                    result.output[:2000] if len(result.output) > 2000 else result.output,
+                    title="[bold red]Tests Failed[/bold red]",
+                    border_style="red",
+                )
+            )
+
+        return result.success
 
     async def _post_task_git(self) -> None:
         """Show diff and offer to commit after file modifications."""
@@ -543,7 +596,7 @@ async def run_task(task: str, config: NexConfig) -> None:
         max_iterations=config.max_iterations,
     )
 
-    agent = Agent(config=agent_config, api_client=client, safety=safety)
+    agent = Agent(config=agent_config, api_client=client, safety=safety, nex_config=config)
 
     try:
         await agent.run()

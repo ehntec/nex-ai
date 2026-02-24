@@ -36,6 +36,8 @@ class NexConfig:
         dry_run: If True, show planned actions without executing.
         log_level: Logging verbosity (DEBUG, INFO, WARNING, ERROR).
         nex_dir: Path to the .nex directory (relative to project root).
+        test_command: Override for auto-detected test command (empty = auto-detect).
+        test_timeout: Maximum seconds to wait for test suite to complete.
     """
 
     project_dir: Path = field(default_factory=Path.cwd)
@@ -46,6 +48,8 @@ class NexConfig:
     dry_run: bool = False
     log_level: str = "INFO"
     nex_dir: Path = field(default_factory=lambda: Path(".nex"))
+    test_command: str = ""
+    test_timeout: int = 120
 
 
 def load_config(project_dir: Path) -> NexConfig:
@@ -140,6 +144,10 @@ def _apply_toml(config: NexConfig, settings: dict[str, Any]) -> None:
         config.dry_run = bool(settings["dry_run"])
     if "log_level" in settings:
         config.log_level = str(settings["log_level"]).upper()
+    if "test_command" in settings:
+        config.test_command = str(settings["test_command"])
+    if "test_timeout" in settings:
+        config.test_timeout = int(settings["test_timeout"])
 
 
 def _apply_env(config: NexConfig) -> None:
@@ -154,3 +162,7 @@ def _apply_env(config: NexConfig) -> None:
         config.dry_run = dry_run.lower() in ("true", "1", "yes")
     if log_level := os.environ.get("NEX_LOG_LEVEL"):
         config.log_level = log_level.upper()
+    if test_cmd := os.environ.get("NEX_TEST_COMMAND"):
+        config.test_command = test_cmd
+    if test_timeout := os.environ.get("NEX_TEST_TIMEOUT"):
+        config.test_timeout = int(test_timeout)
