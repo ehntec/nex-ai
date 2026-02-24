@@ -36,3 +36,8 @@ jobs:
 
       - name: Run tests
         run: pytest -x --tb=short -q
+
+      - name: Build package
+        run: |
+          pip install build
+          python -m build

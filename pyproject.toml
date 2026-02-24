@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "nex-ai"
 version = "0.1.0"
 description = "The coding agent that remembers — AI coding assistant with persistent memory and error learning."
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
 license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Nex AI Contributors" }]
@@ -37,6 +37,7 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
+    "build>=1.0.0",
 ]
 
 [project.scripts]
