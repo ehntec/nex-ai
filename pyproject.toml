@@ -63,13 +63,13 @@ select = [
 ignore = [
     "S101", "TRY003", "S603", "S607", "S110",
     "TC001", "TC002", "TC003",
-    "PLR0912", "PLR0915", "PLR0911", "PLR2004",
+    "PLR0912", "PLR0913", "PLR0915", "PLR0911", "PLR2004",
     "PLC0415", "TRY300", "SIM105", "PERF401",
     "PIE810", "SIM103", "B904",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG", "F841", "E501"]
+"tests/*" = ["ARG", "F841", "E501", "SLF001"]
 
 [tool.mypy]
 strict = true

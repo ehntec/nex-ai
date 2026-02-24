@@ -125,3 +125,73 @@ class TestIndexBuilder:
 
         with pytest.raises(IndexerError):
             builder.search_symbols("anything")
+
+
+class TestIndexBuilderSearchFiles:
+    def test_search_files_groups_by_file(self, tmp_path: Path) -> None:
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / "auth.py").write_text(
+            "def authenticate_user(username, password):\n    pass\n\n"
+            "def verify_token(token):\n    pass\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "db.py").write_text(
+            "def connect_database():\n    pass\n",
+            encoding="utf-8",
+        )
+
+        builder = IndexBuilder(tmp_path)
+        index = builder.build()
+        results = builder.search_files("authenticate user token", index)
+
+        # auth.py should score higher (more relevant symbols)
+        assert len(results) > 0
+        file_paths = [fp for fp, _ in results]
+        assert "auth.py" in file_paths
+
+    def test_search_files_empty_query(self, tmp_path: Path) -> None:
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / "app.py").write_text("def main(): pass\n", encoding="utf-8")
+
+        builder = IndexBuilder(tmp_path)
+        index = builder.build()
+        # All stop words => empty tokens
+        results = builder.search_files("get set init", index)
+        assert results == []
+
+    def test_search_files_returns_scores(self, tmp_path: Path) -> None:
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / "math_ops.py").write_text(
+            "def calculate_sum(numbers):\n    return sum(numbers)\n",
+            encoding="utf-8",
+        )
+
+        builder = IndexBuilder(tmp_path)
+        index = builder.build()
+        results = builder.search_files("calculate sum", index)
+
+        assert len(results) > 0
+        for file_path, score in results:
+            assert isinstance(file_path, str)
+            assert isinstance(score, float)
+            assert score > 0
+
+
+class TestTokenizeStopWords:
+    def test_tokenize_filters_stop_words(self) -> None:
+        tokens = IndexBuilder._tokenize("get config file path")
+        # "get", "config", "file", "path" are all stop words
+        assert tokens == []
+
+    def test_tokenize_keeps_meaningful_words(self) -> None:
+        tokens = IndexBuilder._tokenize("authenticate user login")
+        assert "authenticate" in tokens
+        assert "user" in tokens  # "user" is not a stop word
+        assert "login" in tokens
+
+    def test_tokenize_mixed_stop_and_meaningful(self) -> None:
+        tokens = IndexBuilder._tokenize("get authenticate config")
+        # "get" and "config" are stop words, "authenticate" is not
+        assert "authenticate" in tokens
+        assert "get" not in tokens
+        assert "config" not in tokens

@@ -11,6 +11,8 @@ from nex.memory.errors import ErrorPattern
 
 console = Console(stderr=True)
 
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", '"""', "'''")
+
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are Nex, an AI coding agent that works on the user's codebase. You have access to tools \
 for reading files, writing files, running commands, searching code, and listing directories.
@@ -100,8 +102,9 @@ class ContextAssembler:
     ) -> list[tuple[str, str]]:
         """Select relevant code files based on task description.
 
-        Uses TF-IDF relevance from the index to select top files,
-        filling until the token budget is reached.
+        Uses file-level TF-IDF relevance scoring from the index. Applies a
+        relevance threshold to filter noise. Two-phase budget: 60% for full
+        file content, 40% for signature-only summaries of remaining files.
 
         Args:
             task: The user's task description.
@@ -116,23 +119,28 @@ class ContextAssembler:
 
         builder = IndexBuilder(self._project_dir)
         try:
-            symbols = builder.search_symbols(task, index)
+            ranked_files = builder.search_files(task, index)
         except Exception:
             return []
 
-        # Collect unique files ordered by relevance
-        seen_files: set[str] = set()
-        ordered_files: list[str] = []
-        for sym in symbols:
-            if sym.file_path not in seen_files:
-                seen_files.add(sym.file_path)
-                ordered_files.append(sym.file_path)
+        if not ranked_files:
+            return []
 
-        # Read files until budget is exhausted
+        # Apply relevance threshold
+        top_score = ranked_files[0][1]
+        threshold = self._relevance_threshold(top_score)
+        ranked_files = [(fp, sc) for fp, sc in ranked_files if sc >= threshold]
+
+        # Two-phase budget: 60% full content, 40% signature summaries
+        full_budget = int(budget_tokens * 0.60)
+        sig_budget = budget_tokens - full_budget
+
         results: list[tuple[str, str]] = []
         tokens_used = 0
+        remaining_files: list[str] = []
 
-        for file_path in ordered_files:
+        # Phase 1: Full file content
+        for file_path, _score in ranked_files:
             abs_path = self._project_dir / file_path
             if not abs_path.is_file():
                 continue
@@ -143,24 +151,45 @@ class ContextAssembler:
                 continue
 
             file_tokens = self.estimate_tokens(content)
-            if tokens_used + file_tokens > budget_tokens:
-                # Try to include just the first 200 lines if too large
-                lines = content.splitlines()[:200]
-                truncated = "\n".join(lines) + "\n... (truncated)"
-                trunc_tokens = self.estimate_tokens(truncated)
-                if tokens_used + trunc_tokens <= budget_tokens:
-                    results.append((file_path, truncated))
-                    tokens_used += trunc_tokens
+            if tokens_used + file_tokens <= full_budget:
+                results.append((file_path, content))
+                tokens_used += file_tokens
+                continue
+
+            # Try truncation (first 200 lines)
+            lines = content.splitlines()[:200]
+            truncated = "\n".join(lines) + "\n... (truncated)"
+            trunc_tokens = self.estimate_tokens(truncated)
+            if tokens_used + trunc_tokens <= full_budget:
+                results.append((file_path, truncated))
+                tokens_used += trunc_tokens
+                continue
+
+            # Defer to signature phase
+            remaining_files.append(file_path)
+
+        # Phase 2: Signature-only summaries for remaining files
+        sig_tokens_used = 0
+        for file_path in remaining_files:
+            sig_text = self._extract_signatures(file_path, builder, index)
+            if not sig_text:
+                continue
+
+            sig_tokens = self.estimate_tokens(sig_text)
+            if sig_tokens_used + sig_tokens > sig_budget:
                 break
 
-            results.append((file_path, content))
-            tokens_used += file_tokens
+            results.append((file_path, f"(signatures only)\n{sig_text}"))
+            sig_tokens_used += sig_tokens
 
         return results
 
     @staticmethod
     def estimate_tokens(text: str) -> int:
-        """Estimate token count (~4 chars per token).
+        """Estimate token count with code/comment-aware heuristic.
+
+        Code lines average ~3.5 chars/token due to variable names and syntax.
+        Comment/docstring lines average ~4.5 chars/token (more natural language).
 
         Args:
             text: Input text.
@@ -168,4 +197,56 @@ class ContextAssembler:
         Returns:
             Estimated number of tokens.
         """
-        return len(text) // 4
+        if not text:
+            return 0
+
+        total = 0
+        for line in text.splitlines():
+            stripped = line.lstrip()
+            length = len(line)
+            if not stripped:
+                total += 1  # blank line ≈ 1 token
+            elif stripped.startswith(_COMMENT_PREFIXES):
+                total += max(1, int(length / 4.5))
+            else:
+                total += max(1, int(length / 3.5))
+        return total
+
+    @staticmethod
+    def _relevance_threshold(top_score: float) -> float:
+        """Compute the minimum relevance score to include a file.
+
+        Files below this threshold are considered noise.
+
+        Args:
+            top_score: The highest file relevance score.
+
+        Returns:
+            Threshold value (at least 1.0).
+        """
+        return max(top_score * 0.10, 1.0)
+
+    @staticmethod
+    def _extract_signatures(file_path: str, builder: IndexBuilder, index: CodeIndex) -> str:
+        """Extract function/class signatures for a file as a compact summary.
+
+        Args:
+            file_path: Relative file path.
+            builder: IndexBuilder instance.
+            index: Pre-loaded code index.
+
+        Returns:
+            Formatted string of signatures, or empty string if none found.
+        """
+        symbols = builder.get_file_symbols(file_path, index)
+        if not symbols:
+            return ""
+
+        parts: list[str] = []
+        for sym in symbols:
+            if sym.kind == "import":
+                continue
+            parts.append(sym.signature)
+            if sym.docstring:
+                parts.append(f"    {sym.docstring}")
+        return "\n".join(parts)

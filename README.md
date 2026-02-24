@@ -7,6 +7,8 @@ A CLI-based AI coding agent that wraps the Anthropic Claude API with persistent 
 - **Persistent Memory** — Remembers your project context, conventions, and architecture across sessions
 - **Error Learning** — Logs past mistakes and queries them before generating code to avoid repeating errors
 - **Codebase Indexing** — Uses tree-sitter to parse your codebase and select relevant context for each task
+- **Interactive Chat** — Multi-turn conversation mode with full tool access and persistent history
+- **Smart Context Selection** — Two-phase token budgeting with file-level TF-IDF ranking and signature-only fallback
 - **Safety Layer** — Detects destructive operations (rm -rf, DROP TABLE, force push) and requires confirmation
 - **Git Integration** — Creates isolated branches per task, shows diffs, and offers to commit
 
@@ -25,14 +27,17 @@ nex init
 # Set up your API key
 nex auth
 
-# Run your first task
+# Build the codebase index
+nex index
+
+# Run a one-shot task
 nex "add a health check endpoint"
+
+# Or start an interactive session
+nex chat
 
 # Check project status
 nex status
-
-# View project memory
-nex memory show
 ```
 
 ## Commands
@@ -41,6 +46,8 @@ nex memory show
 |---------|-------------|
 | `nex "task"` | Run a coding task |
 | `nex init` | Initialize .nex/ directory |
+| `nex index` | Build codebase index (.nex/index.json) |
+| `nex chat` | Start interactive chat session |
 | `nex status` | Show project stats |
 | `nex auth` | Configure API key |
 | `nex memory show` | View project memory |
@@ -50,11 +57,23 @@ nex memory show
 
 ## How It Works
 
-1. **Context Assembly** — Loads project memory, error patterns, and relevant code into the prompt
-2. **Task Planning** — Decomposes complex tasks using Claude Haiku
-3. **Agent Loop** — Iterates: call Claude API → execute tools → feed results back
-4. **Code Review** — Independent review step checks the changes
-5. **Git Commit** — Shows diff and offers to commit on an isolated branch
+1. **Context Assembly** — Loads project memory, error patterns, and relevant code into the prompt. Files are ranked by TF-IDF relevance, with top files included in full and remaining files as signature summaries.
+2. **Agent Loop** — Iterates: call Claude API → execute tools → feed results back, up to 25 iterations.
+3. **Interactive Chat** — `nex chat` maintains a persistent conversation with the agent, accumulating context across turns. Useful for exploratory work, debugging, or multi-step tasks.
+4. **Codebase Index** — `nex index` parses your source files with tree-sitter, extracting function/class signatures for fast relevance search.
+5. **Git Commit** — Shows diff and offers to commit on an isolated branch.
+
+## Tools
+
+The agent has access to 5 tools:
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read file contents with line numbers |
+| `write_file` | Write content, creating directories if needed |
+| `run_command` | Execute shell commands (safety-checked) |
+| `search_files` | Regex search across the codebase |
+| `list_directory` | Recursive directory listing |
 
 ## Development
 
@@ -80,7 +99,7 @@ mypy src/nex/
 ```
 src/nex/
 ├── cli.py          # Typer CLI entry point
-├── agent.py        # Core agent loop
+├── agent.py        # Core agent loop + ChatSession
 ├── api_client.py   # Anthropic API wrapper
 ├── planner.py      # Task decomposition (Haiku)
 ├── reviewer.py     # Independent code review
@@ -101,6 +120,16 @@ src/nex/
     ├── search.py   # search_files
     └── git_ops.py  # Git operations
 ```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ANTHROPIC_API_KEY` | Anthropic API key (required) | — |
+| `NEX_MODEL` | Override default model | `claude-sonnet-4-20250514` |
+| `NEX_MAX_ITERATIONS` | Max tool calls per task | `25` |
+| `NEX_DRY_RUN` | Default dry-run mode | `false` |
+| `NEX_LOG_LEVEL` | Logging verbosity | `INFO` |
 
 ## License
 

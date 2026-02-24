@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -20,7 +21,7 @@ from rich.table import Table
 from rich.text import Text
 
 from nex import __version__
-from nex.config import load_config, save_global_config
+from nex.config import NexConfig, load_config, save_global_config
 from nex.exceptions import NexError
 
 app = typer.Typer(
@@ -161,6 +162,51 @@ def init() -> None:
         "  1. Edit [cyan].nex/memory.md[/cyan] with your project details\n"
         "  2. Run [cyan]nex auth[/cyan] to configure your API key\n"
         '  3. Run [cyan]nex "your first task"[/cyan]\n'
+    )
+
+
+@app.command()
+def index() -> None:
+    """Build the codebase index (.nex/index.json)."""
+    nex_dir = Path.cwd() / ".nex"
+    if not nex_dir.is_dir():
+        _error_exit("Project not initialized.", hint="Run 'nex init' first.")
+        return
+
+    from nex.indexer.index import IndexBuilder
+
+    builder = IndexBuilder(Path.cwd())
+
+    start = time.perf_counter()
+    idx = builder.build()
+    elapsed = time.perf_counter() - start
+
+    if not idx.files:
+        console.print(
+            "[yellow]No source files found.[/yellow]\n"
+            "[dim]Hint: Make sure your project has .py, .js, .ts, .go, .rs, or other "
+            "supported source files.[/dim]"
+        )
+        raise typer.Exit(code=0)
+
+    console.print(
+        Panel(
+            Text.assemble(
+                ("Files indexed:   ", "cyan"),
+                (str(len(idx.files)), "bold"),
+                ("\n", ""),
+                ("Symbols found:   ", "cyan"),
+                (str(len(idx.symbols)), "bold"),
+                ("\n", ""),
+                ("Time:            ", "cyan"),
+                (f"{elapsed:.2f}s", "bold"),
+                ("\n", ""),
+                ("Saved to:        ", "cyan"),
+                (str(builder.index_path), "dim"),
+            ),
+            title="[bold green]Index Built[/bold green]",
+            border_style="green",
+        )
     )
 
 
@@ -341,3 +387,120 @@ def memory_cmd(
             )
     else:
         _error_exit(f"Unknown action '{action}'.", hint="Valid: show, edit")
+
+
+@app.command()
+def chat(
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Verbose output")] = False,
+) -> None:
+    """Start an interactive chat session with Nex AI."""
+    nex_dir = Path.cwd() / ".nex"
+    if not nex_dir.is_dir():
+        _error_exit("Project not initialized.", hint="Run 'nex init' first.")
+        return
+
+    try:
+        config = load_config(Path.cwd())
+    except NexError as exc:
+        _error_exit(str(exc))
+        return
+
+    if verbose:
+        config.log_level = "DEBUG"
+
+    if not config.api_key:
+        _error_exit(
+            "Anthropic API key not found.",
+            hint="Run 'nex auth' or set ANTHROPIC_API_KEY environment variable.",
+        )
+        return
+
+    console.print(
+        Panel(
+            "Interactive chat mode. The agent remembers your conversation.\n"
+            'Type [bold]"exit"[/bold] or [bold]"quit"[/bold] to end the session.',
+            title=f"[bold cyan]Nex AI Chat[/bold cyan] v{__version__}",
+            border_style="cyan",
+        )
+    )
+
+    try:
+        asyncio.run(_run_chat(config))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Chat ended.[/yellow]")
+
+
+async def _run_chat(config: NexConfig) -> None:
+    """Run the interactive chat REPL.
+
+    Args:
+        config: Nex configuration.
+    """
+    from nex.agent import ChatSession
+    from nex.api_client import AnthropicClient
+    from nex.context import ContextAssembler
+    from nex.indexer.index import IndexBuilder
+    from nex.memory.errors import ErrorPatternDB
+    from nex.memory.project import ProjectMemory
+    from nex.safety import SafetyLayer
+
+    # Load context once at startup
+    memory = ProjectMemory(config.project_dir)
+    error_db = ErrorPatternDB(config.project_dir)
+    assembler = ContextAssembler(config.project_dir)
+    builder = IndexBuilder(config.project_dir)
+
+    project_memory = memory.load()
+    error_patterns = error_db.find_similar(task_summary="interactive chat session")
+    idx = builder.load()
+    relevant_code = assembler.select_relevant_code("interactive chat session", idx)
+
+    system_prompt = assembler.build_system_prompt(
+        project_memory=project_memory,
+        error_patterns=error_patterns,
+        relevant_code=relevant_code,
+    )
+
+    client = AnthropicClient(api_key=config.api_key, default_model=config.model)
+    safety = SafetyLayer(dry_run=config.dry_run)
+
+    session = ChatSession(
+        api_client=client,
+        system_prompt=system_prompt,
+        project_dir=config.project_dir,
+        safety=safety,
+        dry_run=config.dry_run,
+        max_iterations=config.max_iterations,
+    )
+
+    try:
+        while True:
+            try:
+                user_input = Prompt.ask("[bold cyan]You[/bold cyan]")
+            except EOFError:
+                break
+
+            if not user_input.strip():
+                continue
+            if user_input.strip().lower() in ("exit", "quit"):
+                break
+
+            response = await session.send(user_input)
+            if response:
+                console.print(
+                    Panel(
+                        Markdown(response),
+                        title="[bold green]Nex[/bold green]",
+                        border_style="green",
+                    )
+                )
+    finally:
+        error_db.close()
+        await client.close()
+
+        console.print(
+            f"\n[dim]Session: {session.turn_count} turns | "
+            f"Cost: ${client.usage.estimated_cost:.4f} "
+            f"({client.usage.total_input} in + {client.usage.total_output} out tokens)[/dim]"
+        )
+        console.print("[dim]Chat ended.[/dim]")

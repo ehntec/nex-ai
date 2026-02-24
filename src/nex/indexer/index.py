@@ -19,6 +19,48 @@ from nex.indexer.scanner import FileInfo, FileScanner
 
 console = Console(stderr=True)
 
+_QUERY_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "test",
+        "config",
+        "init",
+        "get",
+        "set",
+        "self",
+        "return",
+        "def",
+        "class",
+        "import",
+        "file",
+        "path",
+        "data",
+        "name",
+        "value",
+        "type",
+        "from",
+        "with",
+        "for",
+        "not",
+        "and",
+        "the",
+        "this",
+        "that",
+        "none",
+        "true",
+        "false",
+        "str",
+        "int",
+        "bool",
+        "list",
+        "dict",
+        "args",
+        "kwargs",
+        "func",
+        "var",
+        "new",
+    }
+)
+
 
 @dataclass
 class CodeIndex:
@@ -198,6 +240,39 @@ class IndexBuilder:
         results.sort(key=lambda s: s.line_start)
         return results
 
+    def search_files(self, query: str, index: CodeIndex | None = None) -> list[tuple[str, float]]:
+        """Search files using aggregated TF-IDF scores from their symbols.
+
+        Groups symbol scores by file and sums them to produce a file-level
+        relevance ranking.
+
+        Args:
+            query: Free-text search query.
+            index: Pre-loaded index. If None, loads from disk.
+
+        Returns:
+            List of (file_path, score) tuples sorted by descending score.
+        """
+        idx = self._ensure_index(index)
+        tokens = self._tokenize(query)
+        if not tokens:
+            return []
+
+        doc_count = len(idx.symbols) or 1
+        df: Counter[str] = Counter()
+        for sym in idx.symbols:
+            for t in set(self._symbol_tokens(sym)):
+                df[t] += 1
+
+        file_scores: dict[str, float] = {}
+        for sym in idx.symbols:
+            score = self._score(sym, tokens, df, doc_count)
+            if score > 0.0:
+                fp = sym.file_path
+                file_scores[fp] = file_scores.get(fp, 0.0) + score
+
+        return sorted(file_scores.items(), key=lambda pair: pair[1], reverse=True)
+
     def _ensure_index(self, index: CodeIndex | None) -> CodeIndex:
         """Return index or load from disk."""
         if index is not None:
@@ -209,10 +284,16 @@ class IndexBuilder:
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
-        """Split text into lowercase tokens, splitting camelCase and snake_case."""
+        """Split text into lowercase tokens, filtering common stop words.
+
+        Splits camelCase and snake_case. Filters out programming-related
+        stop words that match too many symbols and dilute search quality.
+        """
         spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
         spaced = re.sub(r"[_\W]+", " ", spaced)
-        return [t.lower() for t in spaced.split() if len(t) >= 2]
+        return [
+            t.lower() for t in spaced.split() if len(t) >= 2 and t.lower() not in _QUERY_STOP_WORDS
+        ]
 
     @staticmethod
     def _symbol_tokens(sym: Symbol) -> list[str]:

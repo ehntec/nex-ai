@@ -45,6 +45,59 @@ class TestStatus:
         assert result.exit_code == 0
 
 
+class TestIndex:
+    def test_index_not_initialized(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["index"])
+        assert result.exit_code == 1
+
+    def test_index_no_source_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".nex").mkdir()
+        result = runner.invoke(app, ["index"])
+        assert result.exit_code == 0
+        assert "no source files" in result.output.lower()
+
+    def test_index_builds_successfully(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / "main.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+        result = runner.invoke(app, ["index"])
+        assert result.exit_code == 0
+        assert (tmp_path / ".nex" / "index.json").is_file()
+
+    def test_index_shows_summary(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / "app.py").write_text(
+            "def foo():\n    pass\n\ndef bar():\n    pass\n", encoding="utf-8"
+        )
+        result = runner.invoke(app, ["index"])
+        assert result.exit_code == 0
+        # Should display file/symbol counts
+        assert "1" in result.output  # 1 file
+        assert "2" in result.output  # 2 symbols
+
+
+class TestChat:
+    def test_chat_not_initialized(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["chat"])
+        assert result.exit_code == 1
+
+    def test_chat_no_api_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".nex").mkdir()
+        (tmp_path / ".nex" / "memory.md").write_text("# Test\n", encoding="utf-8")
+        # Ensure no API key is set
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        result = runner.invoke(app, ["chat"])
+        assert result.exit_code == 1
+        assert "api key" in result.output.lower()
+
+
 class TestMemory:
     def test_memory_show(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.chdir(tmp_path)
