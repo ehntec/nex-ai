@@ -497,7 +497,7 @@ class Agent:
 
                 # Update memory after each subtask
                 await self._generate_memory_update(
-                    memory, subtask.description, sub_result, haiku_model
+                    memory, subtask.description, sub_result, haiku_model, rate_limiter
                 )
                 memory.prune_section("Session Log")
                 project_memory = memory.load()
@@ -659,6 +659,7 @@ class Agent:
         subtask_description: str,
         result: SubtaskResult,
         haiku_model: str,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         """Summarize a completed subtask and append to Session Log.
 
@@ -670,6 +671,7 @@ class Agent:
             subtask_description: What the subtask was supposed to do.
             result: The subtask result with text, files, and iterations.
             haiku_model: Model ID for the summary call.
+            rate_limiter: Optional rate limiter to pace the API call.
         """
         truncated = result.text[:500]
         files_str = ", ".join(result.files_touched[:10]) or "none"
@@ -678,12 +680,20 @@ class Agent:
         )
 
         try:
+            if rate_limiter is not None:
+                estimated = ContextAssembler.estimate_tokens(user_msg)
+                await rate_limiter.wait_if_needed(estimated)
+
             response = await self._client.send_message(
                 messages=[{"role": "user", "content": user_msg}],
                 system=_MEMORY_SUMMARY_PROMPT,
                 model=haiku_model,
                 max_tokens=256,
             )
+
+            if rate_limiter is not None:
+                rate_limiter.record(response.input_tokens)
+
             summary = ""
             for block in response.content:
                 if block.get("type") == "text":
@@ -693,9 +703,8 @@ class Agent:
             if summary:
                 today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
                 memory.append("Session Log", f"- [{today}] {summary}")
-        except Exception:
-            # Memory updates are best-effort; never fail the main task
-            pass
+        except Exception as exc:
+            console.print(f"[yellow]Memory update skipped:[/yellow] {exc}")
 
     def _generate_mid_subtask_memory_update(
         self,
