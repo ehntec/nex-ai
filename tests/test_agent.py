@@ -33,8 +33,7 @@ def planner_response() -> APIResponse:
             {
                 "type": "text",
                 "text": (
-                    '[{"description": "Add a hello function",'
-                    ' "file_paths": [], "priority": 1}]'
+                    '[{"description": "Add a hello function", "file_paths": [], "priority": 1}]'
                 ),
             }
         ],
@@ -141,9 +140,7 @@ class TestAgent:
         client.usage.estimated_cost = 0.002
 
         # Create the file the tool will read
-        (agent_config.project_dir / "main.py").write_text(
-            "print('hi')", encoding="utf-8"
-        )
+        (agent_config.project_dir / "main.py").write_text("print('hi')", encoding="utf-8")
 
         safety = SafetyLayer(dry_run=False)
         agent = Agent(config=agent_config, api_client=client, safety=safety)
@@ -247,9 +244,7 @@ class TestAgent:
         )
 
         client = MagicMock()
-        client.send_message = AsyncMock(
-            side_effect=[planner_resp, subtask_resp, mem_resp]
-        )
+        client.send_message = AsyncMock(side_effect=[planner_resp, subtask_resp, mem_resp])
         client.close = AsyncMock()
         client.usage = MagicMock()
         client.usage.estimated_cost = 0.001
@@ -309,9 +304,7 @@ class TestAgent:
     ) -> None:
         """If planner fails, agent falls back to _run_single."""
         client = MagicMock()
-        client.send_message = AsyncMock(
-            side_effect=[Exception("Planner API error"), text_response]
-        )
+        client.send_message = AsyncMock(side_effect=[Exception("Planner API error"), text_response])
         client.close = AsyncMock()
         client.usage = MagicMock()
         client.usage.estimated_cost = 0.001
@@ -333,9 +326,7 @@ class TestAgent:
     ) -> None:
         """Session Log should be written to memory.md after each subtask."""
         mem_resp = APIResponse(
-            content=[
-                {"type": "text", "text": "Added hello function to the project."}
-            ],
+            content=[{"type": "text", "text": "Added hello function to the project."}],
             model="claude-haiku-4-5-20251001",
             input_tokens=50,
             output_tokens=20,
@@ -343,9 +334,7 @@ class TestAgent:
         )
 
         client = MagicMock()
-        client.send_message = AsyncMock(
-            side_effect=[planner_response, text_response, mem_resp]
-        )
+        client.send_message = AsyncMock(side_effect=[planner_response, text_response, mem_resp])
         client.close = AsyncMock()
         client.usage = MagicMock()
         client.usage.estimated_cost = 0.001

@@ -263,9 +263,7 @@ class Agent:
         try:
             return await self._run_with_subtasks(rate_limit)
         except Exception as exc:
-            console.print(
-                f"[yellow]Subtask decomposition failed ({exc}), falling back...[/yellow]"
-            )
+            console.print(f"[yellow]Subtask decomposition failed ({exc}), falling back...[/yellow]")
             return await self._run_single()
 
     async def _run_single(self) -> str:
@@ -676,9 +674,7 @@ class Agent:
         truncated = result.text[:500]
         files_str = ", ".join(result.files_touched[:10]) or "none"
         user_msg = (
-            f"Subtask: {subtask_description}\n"
-            f"Result: {truncated}\n"
-            f"Files modified: {files_str}"
+            f"Subtask: {subtask_description}\nResult: {truncated}\nFiles modified: {files_str}"
         )
 
         try:

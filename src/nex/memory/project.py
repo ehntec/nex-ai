@@ -117,9 +117,7 @@ class ProjectMemory:
         self.save(rendered)
         console.print(f"[green]Initialized project memory[/green] for [bold]{project_name}[/bold]")
 
-    def prune_section(
-        self, section: str, max_lines: int = 30, keep_lines: int = 20
-    ) -> None:
+    def prune_section(self, section: str, max_lines: int = 30, keep_lines: int = 20) -> None:
         """Trim a section to prevent unbounded growth.
 
         When the section's content lines exceed *max_lines*, the oldest
