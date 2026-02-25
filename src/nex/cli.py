@@ -59,7 +59,7 @@ _CONFIG_TEMPLATE = """\
 # model = "claude-sonnet-4-20250514"
 # max_iterations = 25
 # dry_run = false
-token_rate_limit = 25000
+token_rate_limit = 20000
 """
 
 

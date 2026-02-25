@@ -52,7 +52,7 @@ class NexConfig:
     nex_dir: Path = field(default_factory=lambda: Path(".nex"))
     test_command: str = ""
     test_timeout: int = 120
-    token_rate_limit: int = 25_000
+    token_rate_limit: int = 20_000
     subtask_token_budget: int = 20_000
 
 

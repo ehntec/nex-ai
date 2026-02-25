@@ -438,9 +438,10 @@ class Agent:
             haiku_model = self._nex_config.haiku_model
 
         planner = Planner(self._client, haiku_model=haiku_model)
+        rate_limiter = RateLimiter(tokens_per_minute=token_rate_limit)
 
         console.print("\n[bold]Decomposing task into subtasks...[/bold]")
-        subtasks = await planner.plan(self._config.task, project_memory)
+        subtasks = await planner.plan(self._config.task, project_memory, rate_limiter)
 
         console.print(f"\n[bold]Running task:[/bold] {self._config.task}")
         rate_info = f"Rate limit: {token_rate_limit} tokens/min | " if token_rate_limit else ""
@@ -449,8 +450,6 @@ class Agent:
             f"{rate_info}"
             f"Max iterations: {self._config.max_iterations}[/dim]\n"
         )
-
-        rate_limiter = RateLimiter(tokens_per_minute=token_rate_limit)
         budget = 20_000
         if self._nex_config:
             budget = self._nex_config.subtask_token_budget

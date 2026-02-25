@@ -8,7 +8,7 @@ from typing import Any
 
 from rich.console import Console
 
-from nex.api_client import AnthropicClient
+from nex.api_client import AnthropicClient, RateLimiter
 
 console = Console(stderr=True)
 
@@ -60,24 +60,35 @@ class Planner:
         self._client = api_client
         self._model = haiku_model
 
-    async def plan(self, task: str, project_context: str) -> list[Subtask]:
+    async def plan(
+        self,
+        task: str,
+        project_context: str,
+        rate_limiter: RateLimiter | None = None,
+    ) -> list[Subtask]:
         """Decompose a task into subtasks.
 
         Args:
             task: The user's task description.
             project_context: Project memory and relevant context.
+            rate_limiter: Optional rate limiter to pace the API call.
 
         Returns:
             List of Subtask instances sorted by priority.
         """
+        user_content = f"Project context:\n{project_context}\n\nTask: {task}"
         messages: list[dict[str, Any]] = [
             {
                 "role": "user",
-                "content": f"Project context:\n{project_context}\n\nTask: {task}",
+                "content": user_content,
             }
         ]
 
         console.print("[dim]Planning task decomposition...[/dim]")
+
+        if rate_limiter is not None:
+            estimated = len(user_content) // 4
+            await rate_limiter.wait_if_needed(estimated)
 
         response = await self._client.send_message(
             messages=messages,
@@ -85,6 +96,9 @@ class Planner:
             model=self._model,
             max_tokens=2048,
         )
+
+        if rate_limiter is not None:
+            rate_limiter.record(response.input_tokens)
 
         # Extract text response
         text = ""
