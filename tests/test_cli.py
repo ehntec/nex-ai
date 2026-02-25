@@ -91,8 +91,9 @@ class TestChat:
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".nex").mkdir()
         (tmp_path / ".nex" / "memory.md").write_text("# Test\n", encoding="utf-8")
-        # Ensure no API key is set
+        # Ensure no API key is set (env var AND global config)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr("nex.config._GLOBAL_CONFIG_PATH", tmp_path / "nonexistent.toml")
         result = runner.invoke(app, ["chat"])
         assert result.exit_code == 1
         assert "api key" in result.output.lower()

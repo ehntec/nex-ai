@@ -117,6 +117,57 @@ class ProjectMemory:
         self.save(rendered)
         console.print(f"[green]Initialized project memory[/green] for [bold]{project_name}[/bold]")
 
+    def prune_section(
+        self, section: str, max_lines: int = 30, keep_lines: int = 20
+    ) -> None:
+        """Trim a section to prevent unbounded growth.
+
+        When the section's content lines exceed *max_lines*, the oldest
+        entries are removed so that only *keep_lines* remain.
+
+        Args:
+            section: Section title without the ``#`` prefix (e.g. "Session Log").
+            max_lines: Trigger pruning when content lines exceed this count.
+            keep_lines: Number of newest content lines to retain after pruning.
+        """
+        if not self.exists():
+            return
+
+        text = self.load()
+        lines = text.splitlines(keepends=True)
+
+        # Locate section heading
+        section_idx: int | None = None
+        for idx, line in enumerate(lines):
+            stripped = line.strip().lstrip("#").strip()
+            if stripped.lower() == section.lower():
+                section_idx = idx
+                break
+
+        if section_idx is None:
+            return
+
+        # Find the end of this section (next heading or EOF)
+        section_end = len(lines)
+        for idx in range(section_idx + 1, len(lines)):
+            if lines[idx].lstrip().startswith("#"):
+                section_end = idx
+                break
+
+        # Extract non-blank content lines within the section
+        content_lines: list[int] = []
+        for idx in range(section_idx + 1, section_end):
+            if lines[idx].strip():
+                content_lines.append(idx)
+
+        if len(content_lines) <= max_lines:
+            return
+
+        # Remove the oldest lines, keep the newest keep_lines
+        remove = set(content_lines[: len(content_lines) - keep_lines])
+        pruned = [line for idx, line in enumerate(lines) if idx not in remove]
+        self.save("".join(pruned))
+
     def append(self, section: str, content: str) -> None:
         """Append content under a given section heading.
 

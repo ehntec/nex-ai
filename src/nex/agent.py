@@ -12,7 +12,8 @@ Follows the agentic REPL pattern:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,13 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 
-from nex.api_client import AnthropicClient
+from nex.api_client import AnthropicClient, RateLimiter
 from nex.config import NexConfig
 from nex.context import ContextAssembler
 from nex.exceptions import NexError, SafetyError, ToolError
 from nex.memory.errors import ErrorPatternDB
 from nex.memory.project import ProjectMemory
+from nex.planner import Planner
 from nex.safety import SafetyLayer
 from nex.test_runner import TestRunner
 from nex.tools import TOOL_DEFINITIONS, ToolResult
@@ -54,6 +56,30 @@ class AgentConfig:
     task: str
     dry_run: bool = False
     max_iterations: int = 25
+
+
+@dataclass
+class SubtaskResult:
+    """Result of a single subtask execution.
+
+    Attributes:
+        text: The final text response from the subtask.
+        files_touched: Paths of files written during the subtask.
+        iterations: Number of agent iterations used.
+    """
+
+    text: str
+    files_touched: list[str] = field(default_factory=list)
+    iterations: int = 0
+
+
+_MID_SUBTASK_MEMORY_THRESHOLD: int = 8
+
+_MEMORY_SUMMARY_PROMPT: str = """\
+You are summarizing what a coding agent just did. Given the subtask and result, \
+write a 1-2 sentence summary. Include what was accomplished and key files modified. \
+Be extremely concise. No markdown. Just 1-2 plain sentences.\
+"""
 
 
 async def execute_tool(
@@ -224,6 +250,27 @@ class Agent:
     async def run(self) -> str:
         """Execute the agent loop and return the final response.
 
+        Always decomposes the task into subtasks. Falls back to the
+        standard single-loop execution only if planning fails.
+
+        Returns:
+            The agent's final text response.
+        """
+        rate_limit = 0
+        if self._nex_config:
+            rate_limit = self._nex_config.token_rate_limit
+
+        try:
+            return await self._run_with_subtasks(rate_limit)
+        except Exception as exc:
+            console.print(
+                f"[yellow]Subtask decomposition failed ({exc}), falling back...[/yellow]"
+            )
+            return await self._run_single()
+
+    async def _run_single(self) -> str:
+        """Execute the standard agent loop (no rate limiting).
+
         Returns:
             The agent's final text response.
         """
@@ -360,6 +407,324 @@ class Agent:
             await self._post_task_git()
 
         return final_response
+
+    async def _run_with_subtasks(self, token_rate_limit: int) -> str:
+        """Execute the task via planner decomposition with memory updates.
+
+        Always decomposes the task into subtasks, builds scoped context for
+        each, updates project memory after every subtask, and optionally
+        paces API calls when a token rate limit is set.
+
+        Args:
+            token_rate_limit: Max input tokens per minute (0 = no limit).
+
+        Returns:
+            The combined final response.
+        """
+        memory = ProjectMemory(self._project_dir)
+        error_db = ErrorPatternDB(self._project_dir)
+        assembler = ContextAssembler(self._project_dir)
+
+        project_memory = memory.load()
+        error_patterns = error_db.find_similar(task_summary=self._config.task)
+
+        # Load index
+        from nex.indexer.index import IndexBuilder
+
+        builder = IndexBuilder(self._project_dir)
+        index = builder.load()
+
+        # Decompose task via planner
+        haiku_model = "claude-haiku-4-5-20251001"
+        if self._nex_config:
+            haiku_model = self._nex_config.haiku_model
+
+        planner = Planner(self._client, haiku_model=haiku_model)
+
+        console.print("\n[bold]Decomposing task into subtasks...[/bold]")
+        subtasks = await planner.plan(self._config.task, project_memory)
+
+        console.print(f"\n[bold]Running task:[/bold] {self._config.task}")
+        rate_info = f"Rate limit: {token_rate_limit} tokens/min | " if token_rate_limit else ""
+        console.print(
+            f"[dim]Subtasks: {len(subtasks)} | "
+            f"{rate_info}"
+            f"Max iterations: {self._config.max_iterations}[/dim]\n"
+        )
+
+        rate_limiter = RateLimiter(tokens_per_minute=token_rate_limit)
+        budget = 20_000
+        if self._nex_config:
+            budget = self._nex_config.subtask_token_budget
+
+        # Split iteration budget across subtasks (min 5 each)
+        iters_per_subtask = max(5, self._config.max_iterations // max(len(subtasks), 1))
+
+        prior_context = ""
+        subtask_results: list[str] = []
+
+        try:
+            for i, subtask in enumerate(subtasks, 1):
+                console.print(
+                    Panel(
+                        f"[bold]{subtask.description}[/bold]\n"
+                        f"[dim]Files: {', '.join(subtask.file_paths) or 'auto'}[/dim]",
+                        title=f"[bold cyan]Subtask {i}/{len(subtasks)}[/bold cyan]",
+                        border_style="cyan",
+                    )
+                )
+
+                # Build scoped context
+                scoped_code = assembler.select_scoped_code(
+                    subtask.file_paths, subtask.description, index, budget
+                )
+
+                system_prompt = assembler.build_subtask_prompt(
+                    subtask_description=subtask.description,
+                    project_memory=project_memory,
+                    error_patterns=error_patterns,
+                    relevant_code=scoped_code,
+                    prior_context=prior_context,
+                )
+
+                sub_result = await self._run_subtask_loop(
+                    system_prompt=system_prompt,
+                    task=subtask.description,
+                    max_iterations=iters_per_subtask,
+                    rate_limiter=rate_limiter,
+                    memory=memory,
+                )
+
+                subtask_results.append(sub_result.text)
+
+                # Update memory after each subtask
+                await self._generate_memory_update(
+                    memory, subtask.description, sub_result, haiku_model
+                )
+                memory.prune_section("Session Log")
+                project_memory = memory.load()
+
+                # Build prior context for the next subtask (keep it compact)
+                prior_context += (
+                    f"- Subtask {i}: {subtask.description} -> {sub_result.text[:200]}\n"
+                )
+
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Agent interrupted by user.[/yellow]")
+        finally:
+            error_db.close()
+
+        final_response = (
+            "\n\n".join(subtask_results) if subtask_results else "No subtasks completed."
+        )
+
+        console.print()
+        console.print(
+            Panel(
+                Markdown(final_response),
+                title="[bold green]All Subtasks Complete[/bold green]",
+                border_style="green",
+            )
+        )
+
+        # Post-task: run tests, show diff, and offer to commit
+        if self._files_modified:
+            tests_passed = await self._run_tests()
+            if not tests_passed:
+                console.print(
+                    "[yellow]Tests failed. Review the changes before committing.[/yellow]"
+                )
+            await self._post_task_git()
+
+        return final_response
+
+    async def _run_subtask_loop(
+        self,
+        system_prompt: str,
+        task: str,
+        max_iterations: int,
+        rate_limiter: RateLimiter,
+        memory: ProjectMemory | None = None,
+    ) -> SubtaskResult:
+        """Run a focused mini agent loop for a single subtask.
+
+        Uses fresh message history to prevent token accumulation. Paces
+        API calls via the rate limiter. Tracks files touched and writes
+        a mid-subtask memory checkpoint for long-running subtasks.
+
+        Args:
+            system_prompt: Scoped system prompt for this subtask.
+            task: The subtask description.
+            max_iterations: Max tool call iterations for this subtask.
+            rate_limiter: Rate limiter to pace API calls.
+            memory: Project memory for mid-subtask checkpoints.
+
+        Returns:
+            A SubtaskResult with the response text, files touched, and
+            iteration count.
+        """
+        messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
+        iteration = 0
+        files_touched: list[str] = []
+
+        while iteration < max_iterations:
+            iteration += 1
+            console.print(f"[dim]--- Subtask iteration {iteration} ---[/dim]")
+
+            # Mid-subtask memory checkpoint for long-running subtasks
+            if iteration == _MID_SUBTASK_MEMORY_THRESHOLD and memory is not None:
+                self._generate_mid_subtask_memory_update(memory, task, iteration, files_touched)
+
+            # Estimate tokens and wait if needed
+            estimated = ContextAssembler.estimate_tokens(system_prompt + task)
+            await rate_limiter.wait_if_needed(estimated)
+
+            response = await self._client.send_message(
+                messages=messages,
+                system=system_prompt,
+                tools=TOOL_DEFINITIONS,
+            )
+
+            # Record actual tokens
+            rate_limiter.record(response.input_tokens)
+
+            # Show token usage
+            console.print(
+                f"[dim]Tokens: {response.input_tokens} in / "
+                f"{response.output_tokens} out | "
+                f"Cost: ${self._client.usage.estimated_cost:.4f}[/dim]"
+            )
+
+            has_tool_use = any(block.get("type") == "tool_use" for block in response.content)
+
+            if not has_tool_use:
+                text = ""
+                for block in response.content:
+                    if block.get("type") == "text":
+                        text = str(block.get("text", ""))
+                        break
+                return SubtaskResult(text=text, files_touched=files_touched, iterations=iteration)
+
+            # Execute tool calls
+            assistant_content = response.content
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            tool_results: list[dict[str, Any]] = []
+            for block in assistant_content:
+                if block.get("type") == "tool_use":
+                    tool_name = block["name"]
+                    tool_input = block["input"]
+                    tool_id = block["id"]
+
+                    summary = _summarize_input(tool_input)
+                    console.print(f"  [cyan]Tool:[/cyan] {tool_name}({summary})")
+
+                    result, modified = await execute_tool(
+                        tool_name,
+                        tool_input,
+                        self._project_dir,
+                        self._safety,
+                        self._config.dry_run,
+                    )
+                    if modified:
+                        self._files_modified = True
+                        # Track written files
+                        if tool_name == "write_file" and "path" in tool_input:
+                            files_touched.append(tool_input["path"])
+
+                    if result.success:
+                        console.print(f"  [green]OK[/green] ({len(result.output)} chars)")
+                    else:
+                        console.print(f"  [red]Error:[/red] {result.error}")
+
+                    content = result.output if result.success else f"Error: {result.error}"
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": content,
+                            "is_error": not result.success,
+                        }
+                    )
+
+            messages.append({"role": "user", "content": tool_results})
+
+        return SubtaskResult(
+            text="Subtask did not complete within iteration limit.",
+            files_touched=files_touched,
+            iterations=iteration,
+        )
+
+    async def _generate_memory_update(
+        self,
+        memory: ProjectMemory,
+        subtask_description: str,
+        result: SubtaskResult,
+        haiku_model: str,
+    ) -> None:
+        """Summarize a completed subtask and append to Session Log.
+
+        Uses Haiku to produce a concise 1-2 sentence summary of what
+        the subtask accomplished and which files were modified.
+
+        Args:
+            memory: Project memory instance.
+            subtask_description: What the subtask was supposed to do.
+            result: The subtask result with text, files, and iterations.
+            haiku_model: Model ID for the summary call.
+        """
+        truncated = result.text[:500]
+        files_str = ", ".join(result.files_touched[:10]) or "none"
+        user_msg = (
+            f"Subtask: {subtask_description}\n"
+            f"Result: {truncated}\n"
+            f"Files modified: {files_str}"
+        )
+
+        try:
+            response = await self._client.send_message(
+                messages=[{"role": "user", "content": user_msg}],
+                system=_MEMORY_SUMMARY_PROMPT,
+                model=haiku_model,
+                max_tokens=256,
+            )
+            summary = ""
+            for block in response.content:
+                if block.get("type") == "text":
+                    summary = block.get("text", "").strip()
+                    break
+
+            if summary:
+                today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+                memory.append("Session Log", f"- [{today}] {summary}")
+        except Exception:
+            # Memory updates are best-effort; never fail the main task
+            pass
+
+    def _generate_mid_subtask_memory_update(
+        self,
+        memory: ProjectMemory,
+        task: str,
+        iteration: int,
+        files_touched: list[str],
+    ) -> None:
+        """Write a lightweight progress checkpoint to Session Log.
+
+        Called when a subtask exceeds ``_MID_SUBTASK_MEMORY_THRESHOLD``
+        iterations, without making an additional API call.
+
+        Args:
+            memory: Project memory instance.
+            task: The subtask description.
+            iteration: Current iteration number.
+            files_touched: Files written so far.
+        """
+        files_str = ", ".join(files_touched[:10]) or "none"
+        note = f"- [In progress] {task} ({iteration} iterations, files: {files_str})"
+        try:
+            memory.append("Session Log", note)
+        except Exception:
+            pass
 
     async def _run_tests(self) -> bool:
         """Detect and run the project's test suite.

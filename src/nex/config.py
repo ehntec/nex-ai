@@ -38,6 +38,8 @@ class NexConfig:
         nex_dir: Path to the .nex directory (relative to project root).
         test_command: Override for auto-detected test command (empty = auto-detect).
         test_timeout: Maximum seconds to wait for test suite to complete.
+        token_rate_limit: Max input tokens per minute. 0 = no rate limiting.
+        subtask_token_budget: Max tokens per subtask context window.
     """
 
     project_dir: Path = field(default_factory=Path.cwd)
@@ -50,6 +52,8 @@ class NexConfig:
     nex_dir: Path = field(default_factory=lambda: Path(".nex"))
     test_command: str = ""
     test_timeout: int = 120
+    token_rate_limit: int = 0
+    subtask_token_budget: int = 20_000
 
 
 def load_config(project_dir: Path) -> NexConfig:
@@ -148,6 +152,10 @@ def _apply_toml(config: NexConfig, settings: dict[str, Any]) -> None:
         config.test_command = str(settings["test_command"])
     if "test_timeout" in settings:
         config.test_timeout = int(settings["test_timeout"])
+    if "token_rate_limit" in settings:
+        config.token_rate_limit = int(settings["token_rate_limit"])
+    if "subtask_token_budget" in settings:
+        config.subtask_token_budget = int(settings["subtask_token_budget"])
 
 
 def _apply_env(config: NexConfig) -> None:
@@ -166,3 +174,7 @@ def _apply_env(config: NexConfig) -> None:
         config.test_command = test_cmd
     if test_timeout := os.environ.get("NEX_TEST_TIMEOUT"):
         config.test_timeout = int(test_timeout)
+    if token_rate := os.environ.get("NEX_TOKEN_RATE_LIMIT"):
+        config.token_rate_limit = int(token_rate)
+    if subtask_budget := os.environ.get("NEX_SUBTASK_TOKEN_BUDGET"):
+        config.subtask_token_budget = int(subtask_budget)

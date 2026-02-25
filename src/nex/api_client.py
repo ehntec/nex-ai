@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from rich.console import Console
@@ -56,6 +57,69 @@ class TokenUsage:
         input_cost = (self.total_input / 1_000_000) * 3.0
         output_cost = (self.total_output / 1_000_000) * 15.0
         return input_cost + output_cost
+
+
+@dataclass
+class RateLimiter:
+    """Token-bucket rate limiter using a 60-second sliding window.
+
+    Tracks timestamps and token counts of recent API calls. Before each call,
+    checks whether the next request would exceed the configured token limit
+    and sleeps if necessary.
+
+    Attributes:
+        tokens_per_minute: Maximum input tokens allowed per 60-second window.
+            Set to 0 to disable rate limiting.
+    """
+
+    tokens_per_minute: int = 0
+    _entries: list[tuple[float, int]] = field(default_factory=list, repr=False)
+
+    @property
+    def is_enabled(self) -> bool:
+        """Return True if rate limiting is active."""
+        return self.tokens_per_minute > 0
+
+    def record(self, input_tokens: int) -> None:
+        """Record a completed API call's actual input token count.
+
+        Args:
+            input_tokens: Actual input tokens consumed by the call.
+        """
+        self._entries.append((time.monotonic(), input_tokens))
+
+    def tokens_in_window(self) -> int:
+        """Return total input tokens consumed in the last 60 seconds."""
+        cutoff = time.monotonic() - 60.0
+        self._entries = [(t, n) for t, n in self._entries if t > cutoff]
+        return sum(n for _, n in self._entries)
+
+    async def wait_if_needed(self, estimated_tokens: int) -> None:
+        """Sleep if the next call would exceed the rate limit.
+
+        Args:
+            estimated_tokens: Estimated input tokens for the upcoming call.
+        """
+        if not self.is_enabled:
+            return
+
+        while True:
+            used = self.tokens_in_window()
+            if used + estimated_tokens <= self.tokens_per_minute:
+                return
+
+            # Find the oldest entry and wait until it expires
+            if self._entries:
+                oldest_time = self._entries[0][0]
+                wait = oldest_time + 60.0 - time.monotonic() + 0.1
+                if wait > 0:
+                    console.print(
+                        f"[yellow]Rate limit: {used} tokens in window, "
+                        f"waiting {wait:.1f}s...[/yellow]"
+                    )
+                    await asyncio.sleep(wait)
+            else:
+                return
 
 
 class AnthropicClient:

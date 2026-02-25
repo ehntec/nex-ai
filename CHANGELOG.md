@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-02-25
+
+### Changed
+
+- Agent now always decomposes tasks into subtasks via the planner, regardless of rate limit settings
+- `_run_single()` is now a fallback path, used only when the planner fails
+- `_run_subtask_loop()` returns `SubtaskResult` (with text, files_touched, iterations) instead of a bare string
+
+### Added
+
+- Memory updates after every subtask — Haiku summarizes what was done and appends to `## Session Log` in `.nex/memory.md`
+- Mid-subtask memory checkpoint at iteration 8 for long-running subtasks (no API call, lightweight progress note)
+- `ProjectMemory.prune_section()` to prevent Session Log from growing unbounded (trims oldest entries beyond 30 lines)
+- Tests for planner failure fallback, memory updates after subtasks, always-subtask behavior, and section pruning
+
 ## [0.1.0] — 2026-02-24
 
 ### Added
