@@ -122,6 +122,30 @@ class RateLimiter:
                 return
 
 
+def _extract_retry_after(exc: Exception, default: float = 60.0) -> float:
+    """Extract retry-after seconds from an Anthropic API error.
+
+    Inspects the exception's response headers for a ``retry-after`` value.
+    Falls back to *default* if the header is missing or unparseable.
+
+    Args:
+        exc: The exception raised by the Anthropic SDK.
+        default: Fallback wait time in seconds.
+
+    Returns:
+        Number of seconds to wait before retrying.
+    """
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        header = getattr(resp, "headers", {}).get("retry-after")
+        if header:
+            try:
+                return max(float(header), 1.0)
+            except (ValueError, TypeError):
+                pass
+    return default
+
+
 class AnthropicClient:
     """Async wrapper around the Anthropic API.
 
@@ -140,7 +164,7 @@ class AnthropicClient:
         self,
         api_key: str,
         default_model: str = "claude-sonnet-4-20250514",
-        max_retries: int = 3,
+        max_retries: int = 5,
     ) -> None:
         """Initialize the Anthropic client.
 
@@ -196,7 +220,9 @@ class AnthropicClient:
             kwargs["tools"] = tools
 
         last_error: Exception | None = None
-        for attempt in range(self._max_retries + 1):
+        # 429 rate limits need more retries with longer waits than server errors
+        max_attempts = self._max_retries + 1
+        for attempt in range(max_attempts):
             try:
                 response = await self._client.messages.create(**kwargs)
 
@@ -230,16 +256,21 @@ class AnthropicClient:
             except Exception as exc:
                 last_error = exc
                 status_code = getattr(exc, "status_code", None)
+                is_rate_limit = status_code == 429
+                is_retryable = status_code in (500, 502, 503, 529)
 
-                # Retry on rate limit or server errors
-                if status_code in (429, 500, 502, 503, 529) and attempt < self._max_retries:
-                    wait = 2**attempt
-                    retry_after = getattr(exc, "retry_after", None)
-                    if retry_after:
-                        wait = max(wait, float(retry_after))
+                if (is_rate_limit or is_retryable) and attempt < max_attempts - 1:
+                    if is_rate_limit:
+                        # Rate limits: extract retry-after from response headers,
+                        # or default to 60s (the full rate-limit window).
+                        wait = _extract_retry_after(exc, default=60.0)
+                    else:
+                        # Server errors: short exponential backoff
+                        wait = float(2**attempt)
+
                     console.print(
-                        f"[yellow]API error {status_code}, retrying in {wait}s "
-                        f"(attempt {attempt + 1}/{self._max_retries})...[/yellow]"
+                        f"[yellow]API error {status_code}, retrying in {wait:.0f}s "
+                        f"(attempt {attempt + 1}/{max_attempts - 1})...[/yellow]"
                     )
                     await asyncio.sleep(wait)
                     continue
@@ -250,7 +281,7 @@ class AnthropicClient:
                 ) from exc
 
         raise APIError(
-            f"Failed after {self._max_retries} retries: {last_error}",
+            f"Failed after {max_attempts - 1} retries: {last_error}",
         )
 
     async def close(self) -> None:
