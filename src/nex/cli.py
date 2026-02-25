@@ -438,7 +438,7 @@ async def _run_chat(config: NexConfig) -> None:
         config: Nex configuration.
     """
     from nex.agent import ChatSession
-    from nex.api_client import AnthropicClient
+    from nex.api_client import AnthropicClient, RateLimiter
     from nex.context import ContextAssembler
     from nex.indexer.index import IndexBuilder
     from nex.memory.errors import ErrorPatternDB
@@ -464,6 +464,7 @@ async def _run_chat(config: NexConfig) -> None:
 
     client = AnthropicClient(api_key=config.api_key, default_model=config.model)
     safety = SafetyLayer(dry_run=config.dry_run)
+    rate_limiter = RateLimiter(tokens_per_minute=config.token_rate_limit)
 
     session = ChatSession(
         api_client=client,
@@ -472,6 +473,13 @@ async def _run_chat(config: NexConfig) -> None:
         safety=safety,
         dry_run=config.dry_run,
         max_iterations=config.max_iterations,
+        rate_limiter=rate_limiter,
+        memory=memory,
+        haiku_model=config.haiku_model,
+        assembler=assembler,
+        error_patterns=error_patterns,
+        index=idx,
+        subtask_token_budget=config.subtask_token_budget,
     )
 
     try:

@@ -800,11 +800,12 @@ class Agent:
 
 
 class ChatSession:
-    """Interactive chat session with persistent message history.
+    """Interactive chat session with subtask decomposition.
 
-    Unlike Agent (which runs a single task to completion), ChatSession
-    maintains a conversation across multiple user turns, accumulating
-    context in its message history.
+    Each user turn is decomposed into subtasks via the planner.
+    Each subtask runs with scoped context in its own mini loop,
+    keeping the main chat history clean. Falls back to direct
+    execution if the planner fails.
     """
 
     def __init__(
@@ -815,6 +816,13 @@ class ChatSession:
         safety: SafetyLayer,
         dry_run: bool = False,
         max_iterations: int = 25,
+        rate_limiter: RateLimiter | None = None,
+        memory: ProjectMemory | None = None,
+        haiku_model: str = "claude-haiku-4-5-20251001",
+        assembler: ContextAssembler | None = None,
+        error_patterns: list[Any] | None = None,
+        index: Any | None = None,
+        subtask_token_budget: int = 20_000,
     ) -> None:
         """Initialize a chat session.
 
@@ -825,6 +833,13 @@ class ChatSession:
             safety: Safety layer for command approval.
             dry_run: If True, skip destructive operations.
             max_iterations: Max tool calls per user turn.
+            rate_limiter: Optional rate limiter for API calls.
+            memory: Optional project memory for session log updates.
+            haiku_model: Model for memory summary and planning calls.
+            assembler: Context assembler for building scoped subtask prompts.
+            error_patterns: Past error patterns for subtask context.
+            index: Code index for relevant code selection.
+            subtask_token_budget: Token budget per subtask context.
         """
         self._client = api_client
         self._system_prompt = system_prompt
@@ -832,6 +847,13 @@ class ChatSession:
         self._safety = safety
         self._dry_run = dry_run
         self._max_iterations = max_iterations
+        self._rate_limiter = rate_limiter
+        self._memory = memory
+        self._haiku_model = haiku_model
+        self._assembler = assembler
+        self._error_patterns = error_patterns or []
+        self._index = index
+        self._subtask_token_budget = subtask_token_budget
         self._messages: list[dict[str, Any]] = []
         self._turn_count = 0
         self._files_modified = False
@@ -852,7 +874,11 @@ class ChatSession:
         return self._files_modified
 
     async def send(self, user_message: str) -> str:
-        """Process a single user turn, executing tools as needed.
+        """Process a user turn via subtask decomposition.
+
+        Decomposes the message into subtasks, executes each with
+        scoped context, and appends a summary to chat history. Falls
+        back to direct execution if the planner fails.
 
         Args:
             user_message: The user's message text.
@@ -861,28 +887,147 @@ class ChatSession:
             The assistant's final text response for this turn.
         """
         self._turn_count += 1
+
+        # Try subtask decomposition if assembler is available
+        if self._assembler is not None:
+            try:
+                return await self._send_with_subtasks(user_message)
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Subtask decomposition failed ({exc}), using direct mode...[/yellow]"
+                )
+
+        return await self._send_direct(user_message)
+
+    async def _send_with_subtasks(self, user_message: str) -> str:
+        """Decompose user message into subtasks and execute each.
+
+        Each subtask runs in its own mini loop with scoped context.
+        Results are collected and a combined response is appended to
+        the main chat history.
+
+        Args:
+            user_message: The user's message text.
+
+        Returns:
+            Combined response from all subtasks.
+        """
+        assert self._assembler is not None
+
+        project_memory = self._memory.load() if self._memory else ""
+
+        # Decompose via planner
+        planner = Planner(self._client, haiku_model=self._haiku_model)
+        console.print("\n[bold]Decomposing into subtasks...[/bold]")
+        subtasks = await planner.plan(user_message, project_memory, self._rate_limiter)
+
+        console.print(
+            f"[dim]Subtasks: {len(subtasks)} | Max iterations: {self._max_iterations}[/dim]\n"
+        )
+
+        iters_per_subtask = max(5, self._max_iterations // max(len(subtasks), 1))
+
+        prior_context = ""
+        subtask_results: list[str] = []
+
+        for i, subtask in enumerate(subtasks, 1):
+            console.print(
+                Panel(
+                    f"[bold]{subtask.description}[/bold]\n"
+                    f"[dim]Files: {', '.join(subtask.file_paths) or 'auto'}[/dim]",
+                    title=f"[bold cyan]Subtask {i}/{len(subtasks)}[/bold cyan]",
+                    border_style="cyan",
+                )
+            )
+
+            # Build scoped context for this subtask
+            scoped_code = self._assembler.select_scoped_code(
+                subtask.file_paths,
+                subtask.description,
+                self._index,
+                self._subtask_token_budget,
+            )
+
+            system_prompt = self._assembler.build_subtask_prompt(
+                subtask_description=subtask.description,
+                project_memory=project_memory,
+                error_patterns=self._error_patterns,
+                relevant_code=scoped_code,
+                prior_context=prior_context,
+            )
+
+            # Run subtask in a mini loop with fresh messages
+            sub_result = await self._run_subtask_loop(
+                system_prompt=system_prompt,
+                task=subtask.description,
+                max_iterations=iters_per_subtask,
+            )
+
+            subtask_results.append(sub_result.text)
+
+            # Update memory after each subtask
+            if self._memory is not None:
+                await self._update_memory_for_subtask(subtask.description, sub_result)
+                self._memory.prune_section("Session Log")
+                project_memory = self._memory.load()
+
+            prior_context += f"- Subtask {i}: {subtask.description} -> {sub_result.text[:200]}\n"
+
+        combined = "\n\n".join(subtask_results) if subtask_results else "No subtasks completed."
+
+        # Append to main chat history as a clean user/assistant pair
         self._messages.append({"role": "user", "content": user_message})
+        self._messages.append(
+            {"role": "assistant", "content": [{"type": "text", "text": combined}]}
+        )
 
-        iterations = 0
-        final_text = ""
+        return combined
 
-        while iterations < self._max_iterations:
-            iterations += 1
+    async def _run_subtask_loop(
+        self,
+        system_prompt: str,
+        task: str,
+        max_iterations: int,
+    ) -> SubtaskResult:
+        """Run a focused mini loop for a single subtask.
+
+        Uses fresh message history to keep each subtask isolated.
+
+        Args:
+            system_prompt: Scoped system prompt for this subtask.
+            task: The subtask description.
+            max_iterations: Max iterations for this subtask.
+
+        Returns:
+            SubtaskResult with text, files, and iteration count.
+        """
+        messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
+        iteration = 0
+        files_touched: list[str] = []
+
+        while iteration < max_iterations:
+            iteration += 1
+            console.print(f"[dim]--- Subtask iteration {iteration} ---[/dim]")
+
+            if self._rate_limiter is not None:
+                estimated = ContextAssembler.estimate_tokens(system_prompt + task)
+                await self._rate_limiter.wait_if_needed(estimated)
 
             response = await self._client.send_message(
-                messages=self._messages,
-                system=self._system_prompt,
+                messages=messages,
+                system=system_prompt,
                 tools=TOOL_DEFINITIONS,
             )
 
-            # Show token usage
+            if self._rate_limiter is not None:
+                self._rate_limiter.record(response.input_tokens)
+
             console.print(
                 f"[dim]Tokens: {response.input_tokens} in / "
                 f"{response.output_tokens} out | "
                 f"Cost: ${self._client.usage.estimated_cost:.4f}[/dim]"
             )
 
-            # Cost warnings
             cost = self._client.usage.estimated_cost
             if cost > 5.0:
                 console.print(
@@ -896,14 +1041,119 @@ class ChatSession:
             has_tool_use = any(block.get("type") == "tool_use" for block in response.content)
 
             if not has_tool_use:
-                # Extract final text
+                text = ""
+                for block in response.content:
+                    if block.get("type") == "text":
+                        text = str(block.get("text", ""))
+                        break
+                return SubtaskResult(text=text, files_touched=files_touched, iterations=iteration)
+
+            assistant_content = response.content
+            messages.append({"role": "assistant", "content": assistant_content})
+
+            tool_results: list[dict[str, Any]] = []
+            for block in assistant_content:
+                if block.get("type") == "tool_use":
+                    tool_name = block["name"]
+                    tool_input = block["input"]
+                    tool_id = block["id"]
+
+                    summary = _summarize_input(tool_input)
+                    console.print(f"  [cyan]Tool:[/cyan] {tool_name}({summary})")
+
+                    result, modified = await execute_tool(
+                        tool_name,
+                        tool_input,
+                        self._project_dir,
+                        self._safety,
+                        self._dry_run,
+                    )
+                    if modified:
+                        self._files_modified = True
+                        if tool_name == "write_file" and "path" in tool_input:
+                            files_touched.append(tool_input["path"])
+
+                    if result.success:
+                        console.print(f"  [green]OK[/green] ({len(result.output)} chars)")
+                    else:
+                        console.print(f"  [red]Error:[/red] {result.error}")
+
+                    content = result.output if result.success else f"Error: {result.error}"
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": content,
+                            "is_error": not result.success,
+                        }
+                    )
+
+            messages.append({"role": "user", "content": tool_results})
+
+        return SubtaskResult(
+            text="Subtask did not complete within iteration limit.",
+            files_touched=files_touched,
+            iterations=iteration,
+        )
+
+    async def _send_direct(self, user_message: str) -> str:
+        """Process a user turn directly without subtask decomposition.
+
+        Fallback mode when planner is unavailable or fails.
+
+        Args:
+            user_message: The user's message text.
+
+        Returns:
+            The assistant's final text response.
+        """
+        self._messages.append({"role": "user", "content": user_message})
+
+        iterations = 0
+        final_text = ""
+        turn_files: list[str] = []
+
+        while iterations < self._max_iterations:
+            iterations += 1
+
+            if self._rate_limiter is not None:
+                estimated = ContextAssembler.estimate_tokens(self._system_prompt + user_message)
+                await self._rate_limiter.wait_if_needed(estimated)
+
+            response = await self._client.send_message(
+                messages=self._messages,
+                system=self._system_prompt,
+                tools=TOOL_DEFINITIONS,
+            )
+
+            if self._rate_limiter is not None:
+                self._rate_limiter.record(response.input_tokens)
+
+            console.print(
+                f"[dim]Tokens: {response.input_tokens} in / "
+                f"{response.output_tokens} out | "
+                f"Cost: ${self._client.usage.estimated_cost:.4f}[/dim]"
+            )
+
+            cost = self._client.usage.estimated_cost
+            if cost > 5.0:
+                console.print(
+                    "[bold red]Warning:[/bold red] Session has exceeded $5.00 in API costs"
+                )
+            elif cost > 1.0:
+                console.print(
+                    "[bold yellow]Warning:[/bold yellow] Session has exceeded $1.00 in API costs"
+                )
+
+            has_tool_use = any(block.get("type") == "tool_use" for block in response.content)
+
+            if not has_tool_use:
                 for block in response.content:
                     if block.get("type") == "text":
                         final_text = block.get("text", "")
                 self._messages.append({"role": "assistant", "content": response.content})
                 break
 
-            # Execute tool calls
             assistant_content = response.content
             self._messages.append({"role": "assistant", "content": assistant_content})
 
@@ -926,6 +1176,8 @@ class ChatSession:
                     )
                     if modified:
                         self._files_modified = True
+                        if tool_name == "write_file" and "path" in tool_input:
+                            turn_files.append(tool_input["path"])
 
                     if result.success:
                         console.print(f"  [green]OK[/green] ({len(result.output)} chars)")
@@ -944,7 +1196,105 @@ class ChatSession:
 
             self._messages.append({"role": "user", "content": tool_results})
 
+        # Update memory after turns that modified files
+        if turn_files and self._memory is not None:
+            await self._update_memory_for_direct(user_message, final_text, turn_files)
+
         return final_text
+
+    async def _update_memory_for_subtask(
+        self, subtask_description: str, result: SubtaskResult
+    ) -> None:
+        """Summarize a completed subtask and append to Session Log.
+
+        Args:
+            subtask_description: What the subtask was supposed to do.
+            result: The subtask result.
+        """
+        if self._memory is None:
+            return
+
+        truncated = result.text[:500]
+        files_str = ", ".join(result.files_touched[:10]) or "none"
+        user_msg = (
+            f"Subtask: {subtask_description}\nResult: {truncated}\nFiles modified: {files_str}"
+        )
+
+        try:
+            if self._rate_limiter is not None:
+                estimated = ContextAssembler.estimate_tokens(user_msg)
+                await self._rate_limiter.wait_if_needed(estimated)
+
+            resp = await self._client.send_message(
+                messages=[{"role": "user", "content": user_msg}],
+                system=_MEMORY_SUMMARY_PROMPT,
+                model=self._haiku_model,
+                max_tokens=256,
+            )
+
+            if self._rate_limiter is not None:
+                self._rate_limiter.record(resp.input_tokens)
+
+            summary = ""
+            for block in resp.content:
+                if block.get("type") == "text":
+                    summary = block.get("text", "").strip()
+                    break
+
+            if summary:
+                today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+                self._memory.append("Session Log", f"- [{today}] {summary}")
+        except Exception as exc:
+            console.print(f"[yellow]Memory update skipped:[/yellow] {exc}")
+
+    async def _update_memory_for_direct(
+        self, user_message: str, response_text: str, files: list[str]
+    ) -> None:
+        """Summarize a direct-mode turn and append to Session Log.
+
+        Args:
+            user_message: The user's input for this turn.
+            response_text: The assistant's final response.
+            files: Files written during this turn.
+        """
+        if self._memory is None:
+            return
+
+        truncated_response = response_text[:300]
+        files_str = ", ".join(files[:10]) or "none"
+        user_msg = (
+            f"User asked: {user_message[:200]}\n"
+            f"Result: {truncated_response}\n"
+            f"Files modified: {files_str}"
+        )
+
+        try:
+            if self._rate_limiter is not None:
+                estimated = ContextAssembler.estimate_tokens(user_msg)
+                await self._rate_limiter.wait_if_needed(estimated)
+
+            resp = await self._client.send_message(
+                messages=[{"role": "user", "content": user_msg}],
+                system=_MEMORY_SUMMARY_PROMPT,
+                model=self._haiku_model,
+                max_tokens=256,
+            )
+
+            if self._rate_limiter is not None:
+                self._rate_limiter.record(resp.input_tokens)
+
+            summary = ""
+            for block in resp.content:
+                if block.get("type") == "text":
+                    summary = block.get("text", "").strip()
+                    break
+
+            if summary:
+                today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+                self._memory.append("Session Log", f"- [{today}] {summary}")
+                self._memory.prune_section("Session Log")
+        except Exception as exc:
+            console.print(f"[yellow]Memory update skipped:[/yellow] {exc}")
 
 
 async def run_task(task: str, config: NexConfig) -> None:

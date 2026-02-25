@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] — 2026-02-25
+
+### Added
+
+- Subtask decomposition in `nex chat` — each user turn is decomposed via the planner with scoped context per subtask
+- Rate limiting for `nex chat` — all API calls (planner, subtask loops, memory updates) go through the rate limiter
+- Memory updates in `nex chat` — Session Log written after each subtask, with pruning
+- Fallback to direct mode in chat if the planner fails
+
+### Changed
+
+- Default `token_rate_limit` set to 20,000 (was 0) — rate limiting enabled out of the box
+- `token_rate_limit = 20000` included in `nex init` config template
+- 429 rate limit retries now wait for `retry-after` header (default 60s) instead of short 2/4/8s backoff
+- `max_retries` increased from 3 to 5 for better rate limit recovery
+- Planner API call now goes through the rate limiter (was ungated)
+- Memory update API call now goes through the rate limiter (was ungated)
+
+### Fixed
+
+- 429 rate limit errors crashing the agent — retries were too short (14s total) for a 60s rate limit window
+- Memory updates silently failing due to rate limits — now warns visibly instead of `except: pass`
+
 ## [0.1.1] — 2026-02-25
 
 ### Changed
